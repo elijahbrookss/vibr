@@ -250,41 +250,16 @@ function App() {
 
   return (
     <main className="app-shell">
-      <header className="hero hero-page">
-        <div className="hero-content">
-          <div className="logo-pill">Vibr</div>
-          <p className="eyebrow">Word-by-word lyric machine</p>
-          <h1>
-            TikTok-ready reels
-            <span>with five-word flashes</span>
-          </h1>
-          <p>
-            Drop your song and we instantly transcribe, timestamp, and pace the captions so only five words hit the screen at once. It feels like the Kashie edits the feed loves—vertical, loud, and surgically synced.
-          </p>
-          <ul className="hero-highlights">
-            <li>Auto word-level timing</li>
-            <li>5-word lyric bursts</li>
-            <li>Kashie-style editor grid</li>
-            <li>9:16 neon overlays</li>
-          </ul>
-        </div>
-        <div className="hero-visual">
-          <div className="tiktok-pill">Optimized for TikTok</div>
-          <div className="lyric-preview-mock">
-            <span>was born</span>
-            <span>Had to get</span>
-            <span>a new fit, I'm</span>
-            <span>wearing</span>
-          </div>
-          <p className="preview-caption">Word phases pulse in sync with the beat.</p>
-        </div>
+      <header className="hero hero-minimal">
+        <div className="logo-pill logo-main">Vibr</div>
+        <p className="hero-subhead">Word-by-word lyric workspace.</p>
       </header>
 
-      <section className="upload-section">
+      <section className="upload-section single">
         <div className="page-card upload-card">
-          <div className="section-heading">
-            <h2>Drop a song in</h2>
-            <p>Upload MP3, WAV, or M4A. The trim modal pops instantly so you can carve out the exact verse.</p>
+          <div className="section-heading minimal">
+            <h2>Upload</h2>
+            <p>Drop audio and trim between 3 seconds and 3 minutes.</p>
           </div>
           <UploadPane
             file={file}
@@ -297,33 +272,23 @@ function App() {
             trimSelection={trimSelection}
           />
         </div>
-        <div className="page-card upload-side">
-          <h3>What you get</h3>
-          <ul className="marketing-list">
-            <li>Transcription + timestamps for every word.</li>
-            <li>Auto enforcement of the five-word rule so lines stay punchy.</li>
-            <li>Smart trim: minimum 3s, maximum 3m clips so renders fit TikTok.</li>
-            <li>Vibr-branded cover frame ready for posting.</li>
-          </ul>
-          <p className="marketing-note">We only show the editor once a song is dropped so the page stays focused.</p>
-        </div>
       </section>
 
       {showEditorSurface && (
         <>
-          <section className="feature-grid">
+          <section className="feature-grid minimal-grid">
             <div className="page-card focus-card">
-              <div className="section-heading">
-                <h3>Dial in the type</h3>
-                <p>Keep the neon Inter look or switch fonts and colors before rendering.</p>
+              <div className="section-heading minimal">
+                <h3>Typeface</h3>
+                <p>Size, family, color.</p>
               </div>
               <FontEditor fontSettings={fontSettings} onChange={(partial) => setFontSettings((prev) => ({ ...prev, ...partial }))} />
-              <p className="helper-text">These settings apply to your next render or lyric update.</p>
+              <p className="helper-text">Applies to the next render.</p>
             </div>
             <div className="page-card focus-card">
-              <div className="section-heading">
-                <h3>Preview the cut</h3>
-                <p>9:16 playback keeps you honest before exporting.</p>
+              <div className="section-heading minimal">
+                <h3>Preview</h3>
+                <p>Play the render.</p>
               </div>
               {hasResult ? (
                 <VideoPreview videoUrl={result?.video_url ?? ""} videoRef={videoRef} videoTrim={videoTrim} videoDuration={videoDuration} />
@@ -335,9 +300,9 @@ function App() {
 
           <section className="lyrics-stack">
             <div className="page-card full-width">
-              <div className="section-heading">
-                <h3>Kashie-style lyric control</h3>
-                <p>The grid shows four bars at a time so you never see more than five words in a burst.</p>
+              <div className="section-heading minimal">
+                <h3>Lyrics</h3>
+                <p>Five words max per line.</p>
               </div>
               {hasResult ? (
                 <LyricsPanel

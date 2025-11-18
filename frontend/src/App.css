@@ -1,149 +1,56 @@
 :root {
-  --bg: #04030f;
-  --card: rgba(12, 9, 31, 0.8);
+  --bg: #07090f;
+  --card: #0f131d;
   --card-border: rgba(255, 255, 255, 0.08);
-  --text: #f8f6ff;
-  --muted: #a5a3c5;
-  --accent: #c026d3;
-  --accent-2: #22d3ee;
+  --text: #f6f7fb;
+  --muted: #9aa1ba;
+  --accent: #f5f5f5;
+  --accent-2: #8a8ff7;
   --panel: rgba(12, 18, 38, 0.94);
 }
 
 .app-shell {
-  width: min(1200px, 92vw);
-  margin: 3rem auto 5rem;
+  width: min(960px, 94vw);
+  margin: 3rem auto 4rem;
   padding: 2.5rem;
-  background: radial-gradient(circle at 15% 10%, rgba(34, 211, 238, 0.15), transparent 40%),
-    radial-gradient(circle at 80% 0%, rgba(192, 38, 211, 0.25), transparent 45%),
-    rgba(4, 3, 15, 0.85);
-  border-radius: 32px;
-  box-shadow: 0 40px 120px rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(24px);
+  background: var(--bg);
+  border-radius: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45);
   color: var(--text);
 }
 
 .hero {
   text-align: left;
-  margin-bottom: 2.5rem;
+  margin-bottom: 2rem;
 }
 
-.hero h1 {
-  font-size: clamp(2.5rem, 4vw, 3.5rem);
-  margin: 0.35rem 0 0.75rem;
-  line-height: 1.1;
-}
-
-.hero h1 span {
-  color: var(--accent-2);
-  display: block;
-}
-
-.hero p {
-  color: var(--muted);
-  max-width: 620px;
-  font-size: 1rem;
-  margin: 0;
-}
-
-.hero-page {
+.hero-minimal {
   display: flex;
-  gap: 2rem;
-  flex-wrap: wrap;
-  align-items: stretch;
-}
-
-.hero-content {
-  flex: 1 1 340px;
+  flex-direction: column;
+  gap: 0.75rem;
 }
 
 .logo-pill {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
   padding: 0.35rem 1.1rem;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.2);
   text-transform: uppercase;
-  letter-spacing: 0.25em;
+  letter-spacing: 0.35em;
   font-size: 0.8rem;
 }
 
-.hero-highlights {
-  margin: 1.25rem 0 0;
-  padding: 0;
-  list-style: none;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 0.75rem;
+.logo-main {
+  font-size: 1rem;
+  letter-spacing: 0.45em;
 }
 
-.hero-highlights li {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 16px;
-  padding: 0.65rem 0.85rem;
-  font-size: 0.9rem;
-  color: var(--muted);
-}
-
-.hero-visual {
-  flex: 0 1 320px;
-  background: radial-gradient(circle at 30% 20%, rgba(192, 38, 211, 0.35), transparent 70%), rgba(2, 3, 12, 0.9);
-  border-radius: 28px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  padding: 1.5rem;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  position: relative;
-  overflow: hidden;
-}
-
-.tiktok-pill {
-  align-self: flex-start;
-  padding: 0.35rem 1rem;
-  border-radius: 999px;
-  background: rgba(34, 211, 238, 0.15);
-  border: 1px solid rgba(34, 211, 238, 0.4);
-  font-size: 0.8rem;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-
-.lyric-preview-mock {
-  flex: 1;
-  background: #040404;
-  border-radius: 20px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  padding: 1.5rem 1rem;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-around;
-  text-transform: lowercase;
-  font-size: 1.25rem;
-  color: #ff2d2d;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  box-shadow: inset 0 0 40px rgba(192, 38, 211, 0.25);
-}
-
-.lyric-preview-mock span {
-  display: block;
-  text-align: center;
-}
-
-.preview-caption {
+.hero-subhead {
   margin: 0;
   color: var(--muted);
-  font-size: 0.85rem;
-}
-
-.eyebrow {
-  text-transform: uppercase;
-  letter-spacing: 0.2em;
-  font-size: 0.75rem;
-  color: var(--accent-2);
-  margin: 0;
+  font-size: 0.95rem;
 }
 
 .experience-grid {
@@ -153,18 +60,22 @@
 }
 
 .upload-section {
-  margin-top: 3rem;
+  margin-top: 2rem;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 1.5rem;
 }
 
+.upload-section.single {
+  grid-template-columns: 1fr;
+}
+
 .page-card {
-  background: rgba(7, 6, 19, 0.9);
-  border-radius: 28px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  padding: 1.75rem;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+  background: var(--card);
+  border-radius: 22px;
+  border: 1px solid var(--card-border);
+  padding: 1.5rem;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 .section-heading h2,
@@ -173,9 +84,18 @@
 }
 
 .section-heading p {
-  margin: 0.5rem 0 0;
+  margin: 0.35rem 0 0;
   color: var(--muted);
-  font-size: 0.95rem;
+  font-size: 0.9rem;
+}
+
+.section-heading.minimal h2,
+.section-heading.minimal h3 {
+  font-size: 1.15rem;
+}
+
+.section-heading.minimal p {
+  font-size: 0.85rem;
 }
 
 .upload-side {
@@ -214,7 +134,11 @@
   margin-top: 2.5rem;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 1.5rem;
+  gap: 1.25rem;
+}
+
+.feature-grid.minimal-grid {
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
 }
 
 .lyrics-stack {
