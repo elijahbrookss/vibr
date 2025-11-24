@@ -4,11 +4,11 @@ import FontEditor from "./components/FontEditor";
 import LyricsPanel from "./components/LyricsPanel";
 import TrimModal from "./components/TrimModal";
 import VideoPreview from "./components/VideoPreview";
-import ExperienceCard from "./components/ExperienceCard";
 import EmptyState from "./components/EmptyState";
 import "./App.css";
 
 const log = (...args) => console.debug("[LyricPortal]", ...args);
+const TRIM_LIMITS = { min: 3, max: 180 };
 
 function App() {
   const [status, setStatus] = useState("");
@@ -38,6 +38,7 @@ function App() {
   const visibleBars = useMemo(() => editedBars.slice(0, 4), [editedBars]);
   const wordPhaseBars = useMemo(() => visibleBars.map((bar, idx) => [idx, bar]), [visibleBars]);
   const hasResult = Boolean(result);
+  const showEditorSurface = Boolean(file || hasResult);
 
   useEffect(() => {
     if (!result) {
@@ -107,10 +108,11 @@ function App() {
         }
         return sum / blockSize;
       });
+      const clippedDuration = Math.min(decoded.duration, TRIM_LIMITS.max);
       setWaveformPoints(nextPoints);
       setAudioDuration(decoded.duration);
-      setModalRange({ start: 0, end: decoded.duration });
-      setTrimSelection({ start: 0, end: decoded.duration, active: false });
+      setModalRange({ start: 0, end: clippedDuration });
+      setTrimSelection({ start: 0, end: clippedDuration, active: false });
       await audioCtx.close();
     } catch (err) {
       log("waveform error", err);
@@ -248,20 +250,17 @@ function App() {
 
   return (
     <main className="app-shell">
-      <header className="hero">
-        <p className="eyebrow">Lyric motion lab</p>
-        <h1>
-          Hip-hop ready lyric reels
-          <span> with neon club energy</span>
-        </h1>
-        <p>
-          Drop a beat, trim the perfect verse, and our AI rides the rhythm with kinetic typography. We built the
-          controls for real-time tweaking without the clutter.
-        </p>
+      <header className="hero hero-minimal">
+        <div className="logo-pill logo-main">Vibr</div>
+        <p className="hero-subhead">Word-by-word lyric workspace.</p>
       </header>
 
-      <div className="experience-grid">
-        <ExperienceCard eyebrow="Step 1" title="Drop a track" hint="MP3 / WAV / M4A">
+      <section className="upload-section single">
+        <div className="page-card upload-card">
+          <div className="section-heading minimal">
+            <h2>Upload</h2>
+            <p>Drop audio and trim between 3 seconds and 3 minutes.</p>
+          </div>
           <UploadPane
             file={file}
             loading={loading}
@@ -272,59 +271,65 @@ function App() {
             onOpenTrimmer={openTrimModal}
             trimSelection={trimSelection}
           />
-        </ExperienceCard>
+        </div>
+      </section>
 
-        <ExperienceCard eyebrow="Step 2" title="Dial in the type" hint="Fonts + colorways">
-          <FontEditor fontSettings={fontSettings} onChange={(partial) => setFontSettings((prev) => ({ ...prev, ...partial }))} />
-          <p className="helper-text">These settings apply to your next render or lyric update.</p>
-        </ExperienceCard>
+      {showEditorSurface && (
+        <>
+          <section className="feature-grid minimal-grid">
+            <div className="page-card focus-card">
+              <div className="section-heading minimal">
+                <h3>Typeface</h3>
+                <p>Size, family, color.</p>
+              </div>
+              <FontEditor fontSettings={fontSettings} onChange={(partial) => setFontSettings((prev) => ({ ...prev, ...partial }))} />
+              <p className="helper-text">Applies to the next render.</p>
+            </div>
+            <div className="page-card focus-card">
+              <div className="section-heading minimal">
+                <h3>Preview</h3>
+                <p>Play the render.</p>
+              </div>
+              {hasResult ? (
+                <VideoPreview videoUrl={result?.video_url ?? ""} videoRef={videoRef} videoTrim={videoTrim} videoDuration={videoDuration} />
+              ) : (
+                <EmptyState title="No renders yet" body="Upload a clip to unlock the animated preview." />
+              )}
+            </div>
+          </section>
 
-        <ExperienceCard
-          eyebrow="Step 3"
-          title="Preview the cut"
-          hint="Synced playback"
-          isLocked={!hasResult}
-          lockMessage="Render a clip to unlock the preview"
-        >
-          {hasResult ? (
-            <VideoPreview videoUrl={result?.video_url ?? ""} videoRef={videoRef} videoTrim={videoTrim} videoDuration={videoDuration} />
-          ) : (
-            <EmptyState title="No renders yet" body="Upload a clip to unlock the animated preview." />
-          )}
-        </ExperienceCard>
-
-        <ExperienceCard
-          eyebrow="Step 4"
-          title="Polish the lyrics"
-          hint="First four bars visible"
-          isLocked={!hasResult}
-          lockMessage="We need a render before the lyric grid appears"
-        >
-          {hasResult ? (
-            <LyricsPanel
-              visibleBars={visibleBars}
-              extraCount={Math.max(0, editedBars.length - visibleBars.length)}
-              setEditingIndex={setEditingIndex}
-              editingIndex={editingIndex}
-              handleBarTextChange={handleBarTextChange}
-              wordPhases={wordPhases}
-              videoRef={videoRef}
-              removeBar={removeBar}
-              addBar={addBar}
-              applyChanges={applyBarChanges}
-              loading={loading}
-            />
-          ) : (
-            <EmptyState
-              title="Lyric grid locked"
-              body="Once we process your track you'll be able to edit the synced bars right here."
-              buttonLabel={file ? "Generate a take" : undefined}
-              onAction={file ? handleSubmit : undefined}
-            />
-          )}
-        </ExperienceCard>
-      </div>
-
+          <section className="lyrics-stack">
+            <div className="page-card full-width">
+              <div className="section-heading minimal">
+                <h3>Lyrics</h3>
+                <p>Five words max per line.</p>
+              </div>
+              {hasResult ? (
+                <LyricsPanel
+                  visibleBars={visibleBars}
+                  extraCount={Math.max(0, editedBars.length - visibleBars.length)}
+                  setEditingIndex={setEditingIndex}
+                  editingIndex={editingIndex}
+                  handleBarTextChange={handleBarTextChange}
+                  wordPhases={wordPhases}
+                  videoRef={videoRef}
+                  removeBar={removeBar}
+                  addBar={addBar}
+                  applyChanges={applyBarChanges}
+                  loading={loading}
+                />
+              ) : (
+                <EmptyState
+                  title="Lyric grid locked"
+                  body="Once we process your track you'll be able to edit the synced bars right here."
+                  buttonLabel={file ? "Generate a take" : undefined}
+                  onAction={file ? handleSubmit : undefined}
+                />
+              )}
+            </div>
+          </section>
+        </>
+      )}
       <TrimModal
         open={trimModalOpen}
         audioUrl={trimPreviewUrl}
@@ -334,10 +339,11 @@ function App() {
         audioDuration={audioDuration}
         onClose={() => setTrimModalOpen(false)}
         waveformPoints={waveformPoints}
+        trimLimits={TRIM_LIMITS}
         onDurationDiscovered={(duration) => {
           setAudioDuration(duration);
           if (!modalRange.end) {
-            setModalRange({ start: 0, end: duration });
+            setModalRange({ start: 0, end: Math.min(duration, TRIM_LIMITS.max) });
           }
         }}
       />
