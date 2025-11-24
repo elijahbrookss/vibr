@@ -305,7 +305,28 @@ function App() {
     setAppState(trimSelection.active ? APP_STATES.fontConfig : APP_STATES.uploaded);
   };
 
-  const renderOverlayText = RENDER_MESSAGES[renderMessageIndex];
+  const renderSteps = useMemo(() => {
+    const stepsToShow = 5;
+    const halfWindow = Math.floor(stepsToShow / 2);
+    const total = RENDER_MESSAGES.length;
+    const entries = [];
+
+    for (let offset = -halfWindow; offset <= halfWindow; offset += 1) {
+      const idx = (renderMessageIndex + offset + total) % total;
+      const status = offset < 0 ? "done" : offset === 0 ? "active" : "upcoming";
+      entries.push({
+        id: `${idx}-${offset}`,
+        message: RENDER_MESSAGES[idx],
+        status,
+      });
+    }
+    return entries;
+  }, [renderMessageIndex]);
+
+  const renderProgress = useMemo(() => {
+    if (!RENDER_MESSAGES.length) return 0;
+    return ((renderMessageIndex + 1) / RENDER_MESSAGES.length) * 100;
+  }, [renderMessageIndex]);
 
   return (
     <main className="app-shell">
@@ -416,17 +437,37 @@ function App() {
       />
       {isRendering && (
         <div className="rendering-overlay">
-          <div className="rendering-card">
-            <div className="logo-pill logo-main logo-animated">Vibr</div>
-            <div className="logo-reflection" aria-hidden="true" />
-            <p className="rendering-text">
-              {renderOverlayText}
-              <span className="ellipsis" aria-hidden="true">
+          <div className="rendering-card rendering-console">
+            <div className="rendering-card-sheen" aria-hidden="true" />
+            <div className="rendering-card-backdrop" aria-hidden="true" />
+            <div className="rendering-header">
+              <span className="rendering-label">VIBR Studio</span>
+              <span className="rendering-mini-dots" aria-hidden="true">
                 <span />
                 <span />
                 <span />
               </span>
-            </p>
+            </div>
+            <div className="rendering-log" aria-live="polite">
+              {renderSteps.map((step) => (
+                <div key={step.id} className={`rendering-step rendering-${step.status}`}>
+                  <span className="rendering-step-icon" aria-hidden="true" />
+                  <span className="rendering-step-text">
+                    {step.message}
+                    {step.status === "active" && (
+                      <span className="ellipsis" aria-hidden="true">
+                        <span />
+                        <span />
+                        <span />
+                      </span>
+                    )}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div className="rendering-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={renderProgress.toFixed(0)}>
+              <div className="rendering-progress-bar" style={{ width: `${renderProgress}%` }} />
+            </div>
           </div>
         </div>
       )}
