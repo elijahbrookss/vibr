@@ -2,9 +2,7 @@ import { describeRange } from "../utils/time";
 
 function UploadPane({
   file,
-  loading,
   onFileChange,
-  onSubmit,
   status,
   error,
   onOpenTrimmer,
@@ -24,9 +22,6 @@ function UploadPane({
       <div className="upload-actions">
         <button type="button" className="ghost-button" onClick={onOpenTrimmer} disabled={!file}>
           {trimSelection?.active ? "Adjust trim" : "Trim intro"}
-        </button>
-        <button className="primary" type="button" onClick={onSubmit} disabled={loading || !file}>
-          {loading ? "Rendering your reel..." : file ? "Generate lyric video" : "Upload audio"}
         </button>
       </div>
       <p className="trim-note">{trimSelection?.active ? describeRange(trimSelection.start, trimSelection.end) : "Full track selected"}</p>
