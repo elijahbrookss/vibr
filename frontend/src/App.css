@@ -854,16 +854,49 @@
 }
 
 .rendering-card {
-  background: linear-gradient(150deg, rgba(15, 23, 42, 0.85), rgba(12, 10, 28, 0.92));
+  position: relative;
+  background: linear-gradient(150deg, rgba(15, 23, 42, 0.9), rgba(12, 10, 28, 0.96));
   border: 1px solid rgba(255, 255, 255, 0.08);
   box-shadow: 0 30px 90px rgba(0, 0, 0, 0.55), inset 0 0 0 1px rgba(34, 211, 238, 0.08);
   border-radius: 24px;
-  padding: 2rem 2.5rem;
+  padding: 2.3rem 2.7rem;
   display: grid;
-  gap: 1rem;
+  gap: 1.35rem;
   place-items: center;
   min-width: min(520px, 90vw);
   text-align: center;
+  overflow: hidden;
+  animation: cardGlow 5.5s ease-in-out infinite;
+}
+
+.rendering-card > * {
+  position: relative;
+  z-index: 1;
+}
+
+.rendering-card::before {
+  content: "";
+  position: absolute;
+  inset: -45%;
+  background: linear-gradient(120deg, rgba(34, 211, 238, 0.12), rgba(192, 38, 211, 0.12), rgba(34, 211, 238, 0.12));
+  filter: blur(20px);
+  animation: cardDrift 18s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.rendering-card::after {
+  content: "";
+  position: absolute;
+  inset: -12%;
+  border-radius: 32px;
+  background: radial-gradient(circle at 30% 30%, rgba(34, 211, 238, 0.08), transparent 45%),
+    radial-gradient(circle at 70% 70%, rgba(192, 38, 211, 0.08), transparent 50%);
+  filter: blur(24px);
+  opacity: 0.7;
+  animation: cardAura 6s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 0;
 }
 
 .logo-animated {
@@ -871,6 +904,15 @@
   background: linear-gradient(120deg, rgba(34, 211, 238, 0.4), rgba(192, 38, 211, 0.6));
   border-color: rgba(255, 255, 255, 0.25);
   box-shadow: 0 8px 30px rgba(34, 211, 238, 0.25);
+}
+
+.logo-reflection {
+  width: 56%;
+  height: 10px;
+  background: radial-gradient(ellipse at center, rgba(34, 211, 238, 0.25), rgba(192, 38, 211, 0.15), transparent 70%);
+  filter: blur(12px);
+  margin-top: -0.3rem;
+  opacity: 0.8;
 }
 
 .rendering-text {
@@ -881,6 +923,7 @@
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
+  margin-top: 0.2rem;
 }
 
 .ellipsis {
@@ -904,6 +947,42 @@
 
 .ellipsis span:nth-child(3) {
   animation-delay: 0.4s;
+}
+
+@keyframes cardDrift {
+  0% {
+    transform: translateX(-8%) translateY(-4%);
+  }
+  50% {
+    transform: translateX(10%) translateY(6%);
+  }
+  100% {
+    transform: translateX(-8%) translateY(-4%);
+  }
+}
+
+@keyframes cardAura {
+  0% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 0.9;
+  }
+  100% {
+    opacity: 0.55;
+  }
+}
+
+@keyframes cardGlow {
+  0% {
+    box-shadow: 0 30px 90px rgba(0, 0, 0, 0.55), inset 0 0 0 1px rgba(34, 211, 238, 0.08), 0 0 24px rgba(34, 211, 238, 0.08);
+  }
+  50% {
+    box-shadow: 0 30px 90px rgba(0, 0, 0, 0.55), inset 0 0 0 1px rgba(34, 211, 238, 0.08), 0 0 34px rgba(192, 38, 211, 0.2);
+  }
+  100% {
+    box-shadow: 0 30px 90px rgba(0, 0, 0, 0.55), inset 0 0 0 1px rgba(34, 211, 238, 0.08), 0 0 24px rgba(34, 211, 238, 0.08);
+  }
 }
 
 @media (max-width: 768px) {

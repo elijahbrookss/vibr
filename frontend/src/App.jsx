@@ -19,16 +19,16 @@ const APP_STATES = {
   // videoClipSelect can slot between fontConfig and rendering without refactors
 };
 const RENDER_MESSAGES = [
-  "Uploading audio to the studio…",
-  "Analyzing waveform and timing…",
-  "Convincing your hi-hats to chill out…",
-  "Splitting lyrics into bars…",
-  "Teaching your lyrics how to dance…",
-  "Syncing text with the beat…",
-  "Reminding the bass it’s not the main character…",
-  "Rendering your lyric video…",
-  "Politely arguing with the tempo…",
-  "Asking the snare if it’s okay to be this loud…",
+  "Uploading audio to the studio",
+  "Analyzing waveform and timing",
+  "Convincing your hi-hats to chill out",
+  "Splitting lyrics into bars",
+  "Teaching your lyrics how to dance",
+  "Syncing text with the beat",
+  "Reminding the bass it’s not the main character",
+  "Rendering your lyric video",
+  "Politely arguing with the tempo",
+  "Asking the snare if it’s okay to be this loud",
 ];
 
 function App() {
@@ -418,6 +418,7 @@ function App() {
         <div className="rendering-overlay">
           <div className="rendering-card">
             <div className="logo-pill logo-main logo-animated">Vibr</div>
+            <div className="logo-reflection" aria-hidden="true" />
             <p className="rendering-text">
               {renderOverlayText}
               <span className="ellipsis" aria-hidden="true">
