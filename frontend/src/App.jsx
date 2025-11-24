@@ -22,7 +22,7 @@ const RENDER_MESSAGES = [
   "Uploading audio to the studio",
   "Analyzing waveform and timing",
   "Convincing your hi-hats to chill out",
-  "Splitting lyrics into bars",
+  "Splitting lyrics into four-word chunks",
   "Teaching your lyrics how to dance",
   "Syncing text with the beat",
   "Reminding the bass it’s not the main character",
@@ -48,9 +48,8 @@ function App() {
     family: "Inter",
     color: "#ffffff",
   });
-  const [editedBars, setEditedBars] = useState([]);
-  const [wordPhases, setWordPhases] = useState({});
-  const [editingIndex, setEditingIndex] = useState(null);
+  const [editedWords, setEditedWords] = useState([]);
+  const [chunks, setChunks] = useState([]);
   const [outputId, setOutputId] = useState("");
   const [videoDuration, setVideoDuration] = useState(0);
   const [videoTrim, setVideoTrim] = useState({ start: 0, end: 0 });
@@ -60,8 +59,7 @@ function App() {
   const renderTimerRef = useRef(null);
   const videoRef = useRef(null);
 
-  const visibleBars = useMemo(() => editedBars.slice(0, 4), [editedBars]);
-  const wordPhaseBars = useMemo(() => visibleBars.map((bar, idx) => [idx, bar]), [visibleBars]);
+  const visibleChunks = useMemo(() => chunks.slice(0, 6), [chunks]);
   const hasResult = Boolean(result);
   const isRendering = appState === APP_STATES.rendering;
   const isReady = appState === APP_STATES.ready;
@@ -71,8 +69,8 @@ function App() {
 
   useEffect(() => {
     if (!result) {
-      setEditedBars([]);
-      setWordPhases({});
+      setEditedWords([]);
+      setChunks([]);
       setOutputId("");
       setVideoDuration(0);
       setVideoTrim({ start: 0, end: 0 });
@@ -82,7 +80,8 @@ function App() {
       return;
     }
     const duration = result.metadata?.video_duration ?? 0;
-    setEditedBars(result.bars ?? []);
+    setEditedWords(result.words ?? []);
+    setChunks(result.chunks ?? []);
     setOutputId(result.output_id ?? "");
     setVideoDuration(duration);
     setVideoTrim({
@@ -94,7 +93,6 @@ function App() {
       family: result.metadata?.font?.family ?? "Inter",
       color: result.metadata?.font?.color ?? "#ffffff",
     });
-    setWordPhases({});
     setAppState(APP_STATES.ready);
   }, [result]);
 
@@ -141,24 +139,6 @@ function App() {
       if (trimPreviewUrl) URL.revokeObjectURL(trimPreviewUrl);
     };
   }, [trimPreviewUrl]);
-
-  useEffect(() => {
-    const timers = {};
-    const phases = {};
-    wordPhaseBars.forEach(([idx, bar]) => {
-      const count = bar.words?.length ?? 0;
-      phases[idx] = count <= 5 ? "group" : "group";
-      if (count > 5) {
-        timers[idx] = setTimeout(() => {
-          setWordPhases((prev) => ({ ...prev, [idx]: "single" }));
-        }, 1000);
-      }
-    });
-    setWordPhases((prev) => ({ ...prev, ...phases }));
-    return () => {
-      Object.values(timers).forEach(clearTimeout);
-    };
-  }, [wordPhaseBars]);
 
   const processAudioForTrim = useCallback(async (selectedFile) => {
     if (!selectedFile) return;
@@ -256,34 +236,11 @@ function App() {
     }
   };
 
-  const handleBarTextChange = (idx, text) => {
-    setEditedBars((prev) => {
-      const next = [...prev];
-      next[idx] = { ...next[idx], text };
-      return next;
-    });
+  const handleWordTextChange = (id, text) => {
+    setEditedWords((prev) => prev.map((word) => (word.id === id ? { ...word, text } : word)));
   };
 
-  const addBar = () => {
-    setEditedBars((prev) => [
-      ...prev,
-      {
-        text: "",
-        start: prev.length ? Math.max(...prev.map((bar) => bar.end)) + 0.1 : 0,
-        end: (prev.length ? Math.max(...prev.map((bar) => bar.end)) + 0.5 : 1) || 1,
-        words: [],
-      },
-    ]);
-    setEditingIndex(editedBars.length);
-  };
-
-  const removeBar = (idx) => {
-    log("removing bar", idx);
-    setEditedBars((prev) => prev.filter((_, index) => index !== idx));
-    if (editingIndex === idx) setEditingIndex(null);
-  };
-
-  const applyBarChanges = async () => {
+  const applyWordChanges = async () => {
     if (!outputId) {
       setError("Generate a video before editing.");
       return;
@@ -295,7 +252,7 @@ function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           output_id: outputId,
-          updated_bars: editedBars,
+          updated_words: editedWords,
           font_family: fontSettings.family,
           font_size: fontSettings.size,
           font_color: fontSettings.color,
@@ -414,30 +371,26 @@ function App() {
       )}
 
       {showLyrics && (
-        <section className="lyrics-stack">
-          <div className="page-card full-width">
-            <div className="section-heading minimal">
-              <h3>Lyrics</h3>
-              <p>Five words max per line.</p>
-            </div>
-            {hasResult ? (
-              <LyricsPanel
-                visibleBars={visibleBars}
-                extraCount={Math.max(0, editedBars.length - visibleBars.length)}
-                setEditingIndex={setEditingIndex}
-                editingIndex={editingIndex}
-                handleBarTextChange={handleBarTextChange}
-                wordPhases={wordPhases}
-                videoRef={videoRef}
-                removeBar={removeBar}
-                addBar={addBar}
-                applyChanges={applyBarChanges}
-                loading={loading}
-              />
-            ) : (
+      <section className="lyrics-stack">
+        <div className="page-card full-width">
+          <div className="section-heading minimal">
+            <h3>Lyrics</h3>
+            <p>Word-level edits, chunked into four-word phrases.</p>
+          </div>
+          {hasResult ? (
+            <LyricsPanel
+              words={editedWords}
+              visibleChunks={visibleChunks}
+              chunkCount={chunks.length}
+              onWordChange={handleWordTextChange}
+              videoRef={videoRef}
+              applyChanges={applyWordChanges}
+              loading={loading}
+            />
+          ) : (
               <EmptyState
                 title="Lyric grid locked"
-                body="Once we process your track you'll be able to edit the synced bars right here."
+                body="Once we process your track you'll be able to edit the synced words right here."
                 buttonLabel={file ? "Generate a take" : undefined}
                 onAction={file ? handleSubmit : undefined}
               />
