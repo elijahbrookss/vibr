@@ -56,6 +56,8 @@ function App() {
   const [videoTrim, setVideoTrim] = useState({ start: 0, end: 0 });
   const [appState, setAppState] = useState(APP_STATES.idle);
   const [renderMessageIndex, setRenderMessageIndex] = useState(0);
+  const renderDurationRef = useRef([]);
+  const renderTimerRef = useRef(null);
   const videoRef = useRef(null);
 
   const visibleBars = useMemo(() => editedBars.slice(0, 4), [editedBars]);
@@ -97,11 +99,41 @@ function App() {
   }, [result]);
 
   useEffect(() => {
-    if (!isRendering) return undefined;
-    const interval = setInterval(() => {
-      setRenderMessageIndex((prev) => (prev + 1) % RENDER_MESSAGES.length);
-    }, 2400);
-    return () => clearInterval(interval);
+    if (!isRendering) {
+      setRenderMessageIndex(0);
+      renderDurationRef.current = [];
+      if (renderTimerRef.current) {
+        clearTimeout(renderTimerRef.current);
+        renderTimerRef.current = null;
+      }
+      return undefined;
+    }
+
+    const randomDuration = () => {
+      const u = Math.random();
+      return 3 + Math.round(22 * (1 - u * u));
+    };
+
+    renderDurationRef.current = RENDER_MESSAGES.map(() => randomDuration());
+    setRenderMessageIndex(0);
+
+    const scheduleNext = (idx) => {
+      const durations = renderDurationRef.current;
+      const currentDuration = durations[idx] ?? 5;
+      renderTimerRef.current = setTimeout(() => {
+        setRenderMessageIndex((prev) => (prev + 1) % RENDER_MESSAGES.length);
+        scheduleNext((idx + 1) % RENDER_MESSAGES.length);
+      }, currentDuration * 1000);
+    };
+
+    scheduleNext(0);
+
+    return () => {
+      if (renderTimerRef.current) {
+        clearTimeout(renderTimerRef.current);
+        renderTimerRef.current = null;
+      }
+    };
   }, [isRendering]);
 
   useEffect(() => {
@@ -323,11 +355,6 @@ function App() {
     return entries;
   }, [renderMessageIndex]);
 
-  const renderProgress = useMemo(() => {
-    if (!RENDER_MESSAGES.length) return 0;
-    return ((renderMessageIndex + 1) / RENDER_MESSAGES.length) * 100;
-  }, [renderMessageIndex]);
-
   return (
     <main className="app-shell">
       <header className="hero hero-minimal">
@@ -441,7 +468,12 @@ function App() {
             <div className="rendering-card-sheen" aria-hidden="true" />
             <div className="rendering-card-backdrop" aria-hidden="true" />
             <div className="rendering-header">
-              <span className="rendering-label">VIBR Studio</span>
+              <div className="rendering-header-meta">
+                <span className="rendering-label">VIBR STUDIO</span>
+                <div className="rendering-header-bar" aria-hidden="true">
+                  <span />
+                </div>
+              </div>
               <span className="rendering-mini-dots" aria-hidden="true">
                 <span />
                 <span />
@@ -452,21 +484,9 @@ function App() {
               {renderSteps.map((step) => (
                 <div key={step.id} className={`rendering-step rendering-${step.status}`}>
                   <span className="rendering-step-icon" aria-hidden="true" />
-                  <span className="rendering-step-text">
-                    {step.message}
-                    {step.status === "active" && (
-                      <span className="ellipsis" aria-hidden="true">
-                        <span />
-                        <span />
-                        <span />
-                      </span>
-                    )}
-                  </span>
+                  <span className="rendering-step-text">{step.message}</span>
                 </div>
               ))}
-            </div>
-            <div className="rendering-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={renderProgress.toFixed(0)}>
-              <div className="rendering-progress-bar" style={{ width: `${renderProgress}%` }} />
             </div>
           </div>
         </div>
