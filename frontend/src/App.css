@@ -816,6 +816,10 @@
   color: rgba(255, 255, 255, 0.6);
 }
 
+.use-full-track {
+  margin-top: 10px;
+}
+
 .trim-validation {
   margin: 0.75rem 0 0;
   color: #f97316;

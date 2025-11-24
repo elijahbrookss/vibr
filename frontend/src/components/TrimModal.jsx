@@ -21,6 +21,7 @@ function TrimModal({
   const audioRef = useRef(null);
   const previewRangeRef = useRef(null);
   const wasPlayingOnDragRef = useRef(false);
+  const latestRangeRef = useRef(modalRange);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [discoveredDuration, setDiscoveredDuration] = useState(audioDuration);
@@ -66,6 +67,13 @@ function TrimModal({
     }
   };
 
+  useEffect(() => {
+    latestRangeRef.current = {
+      start: modalRange.start ?? 0,
+      end: modalRange.end ?? sliderMax,
+    };
+  }, [modalRange, sliderMax]);
+
   const selectionStartRatio = startValue / sliderMax;
   const selectionEndRatio = endValue / sliderMax;
   const selectionDuration = Math.max(0, endValue - startValue);
@@ -105,7 +113,7 @@ function TrimModal({
       target.releasePointerCapture?.(pointerId);
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
-      endPreview();
+      endPreview(handle);
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
@@ -130,11 +138,17 @@ function TrimModal({
     }
   };
 
-  const endPreview = () => {
+  const endPreview = (handle) => {
     const audio = audioRef.current;
+    const { start: latestStart = 0, end: latestEnd = sliderMax } = latestRangeRef.current || {};
     const shouldContinue = wasPlayingOnDragRef.current && audio && !audio.paused;
+    if (handle === "start" && audio) {
+      const snapStart = Math.max(0, latestStart);
+      audio.currentTime = snapStart;
+      setCurrentTime(snapStart);
+    }
     if (shouldContinue) {
-      previewRangeRef.current = { start: startValue, end: endValue };
+      previewRangeRef.current = { start: latestStart, end: latestEnd };
       wasPlayingOnDragRef.current = false;
       return;
     }
@@ -222,7 +236,7 @@ function TrimModal({
       <div className="trim-modal">
         <header>
           <h3>Trim audio (optional)</h3>
-          <p>Drag handles to isolate the verse you need. We keep the bars in sync with the trim.</p>
+          <p>Trim the audio to the section you want.</p>
         </header>
         <div className="trim-player">
           <button className="player-button" type="button" onClick={togglePlayback} aria-label={isPlaying ? "Pause" : "Play"}>
@@ -293,7 +307,7 @@ function TrimModal({
             <p className="trim-duration-text">{durationLabel} selected</p>
             <p className="trim-limits">Min {formatTimestamp(minSelection)} • Max {formatTimestamp(maxSelection)}</p>
             <button
-              className="ghost-button"
+              className="ghost-button use-full-track"
               type="button"
               onClick={() => setModalRange({ start: 0, end: Math.min(sliderMax, maxSelection) })}
             >
