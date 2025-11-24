@@ -20,6 +20,7 @@ function TrimModal({
   const trackRef = useRef(null);
   const audioRef = useRef(null);
   const previewRangeRef = useRef(null);
+  const wasPlayingOnDragRef = useRef(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [discoveredDuration, setDiscoveredDuration] = useState(audioDuration);
@@ -44,7 +45,7 @@ function TrimModal({
       return { ...prev, start: nextStart };
     });
     if (options.preview) {
-      startPreview({ start: nextStart, end: nextEnd });
+      startPreview({ start: nextStart, end: nextEnd, source: "start" });
     }
   };
 
@@ -61,7 +62,7 @@ function TrimModal({
       return { ...prev, end: nextEnd };
     });
     if (options.preview) {
-      startPreview({ start: nextStart, end: nextEnd });
+      startPreview({ start: nextStart, end: nextEnd, source: "end" });
     }
   };
 
@@ -86,6 +87,7 @@ function TrimModal({
 
   const beginHandleDrag = (handle) => (event) => {
     event.preventDefault();
+    wasPlayingOnDragRef.current = !audioRef.current?.paused;
     const pointerId = event.pointerId;
     const target = event.currentTarget;
     target.setPointerCapture?.(pointerId);
@@ -109,18 +111,18 @@ function TrimModal({
     window.addEventListener("pointerup", onUp);
   };
 
-  const startPreview = ({ start, end }) => {
+  const startPreview = ({ start, end, source }) => {
     const audio = audioRef.current;
     if (!audio) return;
     const duration = discoveredDuration || audio.duration || sliderMax;
     if (!Number.isFinite(duration)) return;
     const safeStart = Math.min(Math.max(start ?? 0, 0), duration);
     const safeEnd = Math.max(Math.min(end ?? duration, duration), safeStart + 0.01);
+    const scrubTarget = source === "end" ? safeEnd : safeStart;
     previewRangeRef.current = { start: safeStart, end: safeEnd };
-    const shouldSeek =
-      Math.abs(audio.currentTime - safeStart) > 0.05 || audio.currentTime < safeStart || audio.currentTime > safeEnd;
-    if (shouldSeek) {
-      audio.currentTime = safeStart;
+    const shouldSeek = Math.abs(audio.currentTime - scrubTarget) > 0.01;
+    if (shouldSeek || audio.currentTime < safeStart || audio.currentTime > safeEnd) {
+      audio.currentTime = scrubTarget;
     }
     if (audio.paused) {
       audio.play();
@@ -130,7 +132,14 @@ function TrimModal({
 
   const endPreview = () => {
     const audio = audioRef.current;
+    const shouldContinue = wasPlayingOnDragRef.current && audio && !audio.paused;
+    if (shouldContinue) {
+      previewRangeRef.current = { start: startValue, end: endValue };
+      wasPlayingOnDragRef.current = false;
+      return;
+    }
     previewRangeRef.current = null;
+    wasPlayingOnDragRef.current = false;
     if (audio) {
       audio.pause();
       setIsPlaying(false);
@@ -146,7 +155,8 @@ function TrimModal({
     const selection = { start: startValue, end: endValue };
     previewRangeRef.current = selection;
     if (audio.paused) {
-      const shouldSeek = audio.currentTime < selection.start || audio.currentTime > selection.end - 0.05;
+      const shouldSeek =
+        Math.abs(audio.currentTime - selection.start) > 0.01 || audio.currentTime < selection.start || audio.currentTime > selection.end;
       if (shouldSeek) {
         audio.currentTime = selection.start;
       }
@@ -165,9 +175,11 @@ function TrimModal({
       setCurrentTime(audio.currentTime);
       const duration = discoveredDuration || audio.duration || sliderMax;
       const preview = previewRangeRef.current;
-      if (preview && audio.currentTime >= preview.end - 0.01) {
-        audio.pause();
-        setIsPlaying(false);
+      if (preview) {
+        const { start, end } = preview;
+        if (audio.currentTime >= end - 0.01) {
+          audio.currentTime = start;
+        }
       }
       if (Number.isFinite(duration) && audio.currentTime > duration) {
         audio.pause();
@@ -186,11 +198,24 @@ function TrimModal({
     };
   }, [discoveredDuration, sliderMax]);
 
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio || !isPlaying) return;
+    const nextRange = { start: startValue, end: endValue };
+    previewRangeRef.current = nextRange;
+    if (audio.currentTime < nextRange.start || audio.currentTime > nextRange.end) {
+      audio.currentTime = nextRange.start;
+    }
+  }, [endValue, isPlaying, startValue]);
+
   const progressPercent = (() => {
-    const duration = discoveredDuration || sliderMax;
-    if (!duration) return 0;
-    return Math.min(100, (currentTime / duration) * 100);
+    if (selectionDuration <= 0) return 0;
+    const relative = Math.max(0, currentTime - startValue);
+    return Math.min(100, (relative / selectionDuration) * 100);
   })();
+
+  const displayedCurrent = selectionDuration > 0 ? Math.min(Math.max(0, currentTime - startValue), selectionDuration) : currentTime;
+  const displayedTotal = selectionDuration > 0 ? selectionDuration : discoveredDuration || sliderMax;
 
   return (
     <div className="trim-modal-backdrop">
@@ -208,8 +233,8 @@ function TrimModal({
               <div className="player-progress-fill" style={{ width: `${progressPercent}%` }} />
             </div>
             <div className="player-times">
-              <span>{formatTimestamp(currentTime)}</span>
-              <span>{formatTimestamp(discoveredDuration || sliderMax)}</span>
+              <span>{formatTimestamp(displayedCurrent)}</span>
+              <span>{formatTimestamp(displayedTotal)}</span>
             </div>
           </div>
         </div>
