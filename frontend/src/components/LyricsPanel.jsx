@@ -1,41 +1,98 @@
 import { formatTimestamp } from "../utils/time";
 
-function LyricsPanel({ words, visibleChunks, chunkCount, onWordChange, videoRef, applyChanges, loading }) {
+function LyricsPanel({
+  words,
+  visibleChunks,
+  chunkCount,
+  onWordChange,
+  onWordTimeChange,
+  onInsertAfter,
+  activeWordId,
+  wordError,
+  overlayStyle,
+  videoRef,
+  applyChanges,
+  loading,
+}) {
+  const seekTo = (time) => {
+    if (videoRef?.current) {
+      videoRef.current.currentTime = Math.max(0, time ?? 0);
+    }
+  };
+
+  const hasWords = words.length > 0;
   return (
-    <div className="lyrics-panel">
+    <div className="lyrics-panel" style={overlayStyle}>
       <div className="panel-header">
         <div>
           <h3>Rendered lyrics</h3>
           <p className="subtitle">Edit individual words; rendering groups them into four-word chunks.</p>
         </div>
+        {wordError && <div className="word-error">{wordError}</div>}
       </div>
-      <div className="word-grid">
+      <div className="word-grid" aria-live="polite">
         <div className="word-grid-header">
           <span>Word</span>
-          <span>Start</span>
-          <span>End</span>
+          <span>Start (s)</span>
+          <span>End (s)</span>
+          <span className="word-actions-col">Insert</span>
         </div>
-        {words.length === 0 && <p className="lyric-tip">Generate a take to unlock the lyric grid.</p>}
-        {words.map((word) => (
-          <div key={word.id} className="word-row">
-            <input
-              className="word-input"
-              value={word.text}
-              onChange={(event) => onWordChange(word.id, event.target.value)}
-              aria-label={`Edit word ${word.text}`}
-            />
-            <button
-              type="button"
-              className="seek"
-              onClick={() => {
-                if (videoRef.current) videoRef.current.currentTime = Math.max(0, word.start ?? 0);
-              }}
+        {!hasWords && <p className="lyric-tip">Generate a take to unlock the lyric grid.</p>}
+        <div className="word-grid-body">
+          {words.map((word, idx) => (
+            <div
+              key={word.id}
+              className={`word-row ${activeWordId === word.id ? "active" : ""}`}
+              onClick={() => seekTo(word.start)}
             >
-              {formatTimestamp(word.start ?? 0)}
-            </button>
-            <span className="timestamp">{formatTimestamp(word.end ?? 0)}</span>
-          </div>
-        ))}
+              <input
+                className="word-input"
+                value={word.text}
+                onChange={(event) => onWordChange(word.id, event.target.value)}
+                aria-label={`Edit word ${word.text}`}
+              />
+              <input
+                type="number"
+                step="0.001"
+                min="0"
+                className="time-input"
+                value={Number.isFinite(word.start) ? word.start.toFixed(3) : "0.000"}
+                onClick={(event) => event.stopPropagation()}
+                onChange={(event) => onWordTimeChange(word.id, "start", event.target.value)}
+                aria-label={`Set start for ${word.text}`}
+              />
+              <input
+                type="number"
+                step="0.001"
+                min="0"
+                className="time-input"
+                value={Number.isFinite(word.end) ? word.end.toFixed(3) : "0.000"}
+                onClick={(event) => event.stopPropagation()}
+                onChange={(event) => onWordTimeChange(word.id, "end", event.target.value)}
+                aria-label={`Set end for ${word.text}`}
+              />
+              <div className="word-actions">
+                {idx < words.length - 1 ? (
+                  <button
+                    type="button"
+                    className="ghost"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onInsertAfter(word.id);
+                    }}
+                    aria-label="Insert a new word after this"
+                  >
+                    +
+                  </button>
+                ) : (
+                  <span className="word-actions-placeholder" aria-hidden="true">
+                    ·
+                  </span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
       <div className="chunk-preview">
         <div className="chunk-preview-header">
@@ -45,21 +102,24 @@ function LyricsPanel({ words, visibleChunks, chunkCount, onWordChange, videoRef,
           )}
         </div>
         <div className="chunk-list">
-          {visibleChunks.map((chunk, idx) => (
-            <div key={`${chunk.start}-${idx}`} className="chunk-card">
-              <div className="chunk-times">
-                <span>{formatTimestamp(chunk.start)}</span>
-                <span>{formatTimestamp(chunk.end)}</span>
+          {visibleChunks.map((chunk, idx) => {
+            const isActive = chunk.words?.some((w) => w.id === activeWordId);
+            return (
+              <div key={`${chunk.start}-${idx}`} className={`chunk-card ${isActive ? "active" : ""}`}>
+                <div className="chunk-times">
+                  <span>{formatTimestamp(chunk.start, { milliseconds: true })}</span>
+                  <span>{formatTimestamp(chunk.end, { milliseconds: true })}</span>
+                </div>
+                <div className={`bar-words animated anim-${overlayStyle?.["--overlay-animation"]}`}>
+                  {chunk.words?.map((word) => (
+                    <span key={word.id} className={`word-chip ${activeWordId === word.id ? "active" : ""}`}>
+                      {word.text}
+                    </span>
+                  ))}
+                </div>
               </div>
-              <div className="bar-words animated">
-                {chunk.words?.map((word) => (
-                  <span key={word.id} className="word-chip">
-                    {word.text}
-                  </span>
-                ))}
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
       <div className="update-actions">

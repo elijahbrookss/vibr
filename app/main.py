@@ -38,6 +38,7 @@ CHUNKS_METADATA_NAME = "chunks.json"
 SAFE_AREA_WIDTH_RATIO = 0.88
 SAFE_AREA_HEIGHT_RATIO = 0.28
 MIN_FONT_SIZE = 36
+MIN_WORD_DURATION = 0.05
 
 MODEL: Optional[whisper.Whisper] = None
 LOGGER = logging.getLogger("lyric_backend")
@@ -303,6 +304,27 @@ def build_chunks(words: List[Word]) -> List[LyricChunk]:
     return chunks
 
 
+def validate_word_timings(words: List[Word], total_duration: Optional[float] = None) -> List[Word]:
+    ordered = sorted(words, key=lambda w: (w.start, w.end))
+    previous_end = 0.0
+    for index, word in enumerate(ordered):
+        if word.start < 0 or word.end < 0:
+            raise HTTPException(status_code=400, detail="Word timings cannot be negative.")
+        if word.end - word.start < MIN_WORD_DURATION:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Word '{word.text}' must be at least {int(MIN_WORD_DURATION * 1000)}ms long.",
+            )
+        if word.end <= word.start:
+            raise HTTPException(status_code=400, detail=f"Word '{word.text}' must end after it starts.")
+        if index > 0 and word.start < previous_end:
+            raise HTTPException(status_code=400, detail="Words must be ordered without overlapping.")
+        if total_duration is not None and word.end > total_duration + 0.001:
+            raise HTTPException(status_code=400, detail="Word timing exceeds the available audio duration.")
+        previous_end = word.end
+    return ordered
+
+
 def words_payload(words: List[Word]) -> List[Dict[str, Any]]:
     return [
         {
@@ -499,7 +521,7 @@ async def process_audio(
         duration_ms = (time.time() - start_transcription) * 1000
         LOGGER.info("transcription complete", extra={"duration_ms": f"{duration_ms:.2f}", "segments": len(transcription.get("segments", []))})
 
-        words = extract_words(transcription)
+        words = validate_word_timings(extract_words(transcription))
         LOGGER.info("extracted words", extra={"count": len(words)})
         chunks = build_chunks(words)
         LOGGER.info("built chunks", extra={"chunks": len(chunks)})
@@ -595,17 +617,21 @@ def update_output(payload: UpdatePayload):
         raise HTTPException(status_code=400, detail="No lyric words to update.")
 
     offset = current_trim_offset if payload.updated_words is not None else 0.0
-    base_words = [
-        Word(
-            id=str(word.get("id", idx)),
-            text=word.get("text", ""),
-            start=float(word.get("start", 0.0)) + offset,
-            end=float(word.get("end", 0.0)) + offset,
+    base_words: List[Word] = []
+    for idx, word in enumerate(source_words):
+        raw_id = word.get("id")
+        resolved_id = str(raw_id) if raw_id is not None else f"{idx}-{uuid.uuid4().hex[:8]}"
+        base_words.append(
+            Word(
+                id=resolved_id,
+                text=word.get("text", ""),
+                start=float(word.get("start", 0.0)) + offset,
+                end=float(word.get("end", 0.0)) + offset,
+            )
         )
-        for idx, word in enumerate(source_words)
-    ]
 
     original_duration = metadata.get("video_duration", max((word.end for word in base_words), default=0.0))
+    base_words = validate_word_timings(base_words, original_duration)
     trim_start = payload.video_trim_start if payload.video_trim_start is not None else metadata.get("video_trim", {}).get("start", 0.0)
     trim_end = payload.video_trim_end if payload.video_trim_end is not None else metadata.get("video_trim", {}).get("end", original_duration)
     trim_start = max(0.0, min(trim_start, original_duration))
@@ -623,6 +649,8 @@ def update_output(payload: UpdatePayload):
 
     if not filtered_words:
         raise HTTPException(status_code=400, detail="Trim range removed all lyric words.")
+
+    filtered_words = validate_word_timings(filtered_words, trim_end - trim_start)
 
     chunks = build_chunks(filtered_words)
 
