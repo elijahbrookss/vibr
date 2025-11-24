@@ -279,6 +279,14 @@
   transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
+.primary.full {
+  width: 100%;
+  justify-content: center;
+  display: inline-flex;
+  align-items: center;
+  text-align: center;
+}
+
 .primary:hover:not(:disabled) {
   transform: translateY(-1px);
   box-shadow: 0 10px 25px rgba(34, 211, 238, 0.35);
@@ -832,6 +840,72 @@
   gap: 0.75rem;
 }
 
+.rendering-overlay {
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(circle at 20% 20%, rgba(46, 196, 255, 0.08), transparent 35%),
+    radial-gradient(circle at 80% 60%, rgba(192, 38, 211, 0.12), transparent 42%),
+    rgba(5, 6, 14, 0.92);
+  backdrop-filter: blur(6px);
+  display: grid;
+  place-items: center;
+  z-index: 80;
+  pointer-events: all;
+}
+
+.rendering-card {
+  background: linear-gradient(150deg, rgba(15, 23, 42, 0.85), rgba(12, 10, 28, 0.92));
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.55), inset 0 0 0 1px rgba(34, 211, 238, 0.08);
+  border-radius: 24px;
+  padding: 2rem 2.5rem;
+  display: grid;
+  gap: 1rem;
+  place-items: center;
+  min-width: min(520px, 90vw);
+  text-align: center;
+}
+
+.logo-animated {
+  animation: floaty 3.5s ease-in-out infinite, glowPulse 2.6s ease-in-out infinite;
+  background: linear-gradient(120deg, rgba(34, 211, 238, 0.4), rgba(192, 38, 211, 0.6));
+  border-color: rgba(255, 255, 255, 0.25);
+  box-shadow: 0 8px 30px rgba(34, 211, 238, 0.25);
+}
+
+.rendering-text {
+  margin: 0;
+  font-size: 1.1rem;
+  color: var(--text);
+  letter-spacing: 0.02em;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.ellipsis {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ellipsis span {
+  width: 6px;
+  height: 6px;
+  background: linear-gradient(180deg, rgba(34, 211, 238, 0.9), rgba(192, 38, 211, 0.9));
+  border-radius: 50%;
+  animation: dotPulse 1.2s infinite ease-in-out;
+  box-shadow: 0 0 12px rgba(34, 211, 238, 0.35);
+}
+
+.ellipsis span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.ellipsis span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
 @media (max-width: 768px) {
   .app-shell {
     padding: 1.75rem;
@@ -883,5 +957,44 @@
   }
   100% {
     filter: brightness(1);
+  }
+}
+
+@keyframes dotPulse {
+  0% {
+    transform: translateY(0);
+    opacity: 0.6;
+  }
+  50% {
+    transform: translateY(-2px);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 0.6;
+  }
+}
+
+@keyframes floaty {
+  0% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+  100% {
+    transform: translateY(0);
+  }
+}
+
+@keyframes glowPulse {
+  0% {
+    box-shadow: 0 8px 30px rgba(34, 211, 238, 0.15);
+  }
+  50% {
+    box-shadow: 0 10px 36px rgba(192, 38, 211, 0.35);
+  }
+  100% {
+    box-shadow: 0 8px 30px rgba(34, 211, 238, 0.15);
   }
 }

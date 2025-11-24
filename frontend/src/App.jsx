@@ -9,6 +9,27 @@ import "./App.css";
 
 const log = (...args) => console.debug("[LyricPortal]", ...args);
 const TRIM_LIMITS = { min: 3, max: 180 };
+const APP_STATES = {
+  idle: "idle",
+  uploaded: "uploaded",
+  trimming: "trimming",
+  fontConfig: "fontConfig",
+  rendering: "rendering",
+  ready: "ready",
+  // videoClipSelect can slot between fontConfig and rendering without refactors
+};
+const RENDER_MESSAGES = [
+  "Uploading audio to the studio…",
+  "Analyzing waveform and timing…",
+  "Convincing your hi-hats to chill out…",
+  "Splitting lyrics into bars…",
+  "Teaching your lyrics how to dance…",
+  "Syncing text with the beat…",
+  "Reminding the bass it’s not the main character…",
+  "Rendering your lyric video…",
+  "Politely arguing with the tempo…",
+  "Asking the snare if it’s okay to be this loud…",
+];
 
 function App() {
   const [status, setStatus] = useState("");
@@ -33,12 +54,18 @@ function App() {
   const [outputId, setOutputId] = useState("");
   const [videoDuration, setVideoDuration] = useState(0);
   const [videoTrim, setVideoTrim] = useState({ start: 0, end: 0 });
+  const [appState, setAppState] = useState(APP_STATES.idle);
+  const [renderMessageIndex, setRenderMessageIndex] = useState(0);
   const videoRef = useRef(null);
 
   const visibleBars = useMemo(() => editedBars.slice(0, 4), [editedBars]);
   const wordPhaseBars = useMemo(() => visibleBars.map((bar, idx) => [idx, bar]), [visibleBars]);
   const hasResult = Boolean(result);
-  const showEditorSurface = Boolean(file || hasResult);
+  const isRendering = appState === APP_STATES.rendering;
+  const isReady = appState === APP_STATES.ready;
+  const showTypeface = appState === APP_STATES.fontConfig || isReady || isRendering;
+  const showPreview = isReady;
+  const showLyrics = isReady;
 
   useEffect(() => {
     if (!result) {
@@ -47,6 +74,9 @@ function App() {
       setOutputId("");
       setVideoDuration(0);
       setVideoTrim({ start: 0, end: 0 });
+      if (!file) {
+        setAppState(APP_STATES.idle);
+      }
       return;
     }
     const duration = result.metadata?.video_duration ?? 0;
@@ -63,7 +93,16 @@ function App() {
       color: result.metadata?.font?.color ?? "#ffffff",
     });
     setWordPhases({});
+    setAppState(APP_STATES.ready);
   }, [result]);
+
+  useEffect(() => {
+    if (!isRendering) return undefined;
+    const interval = setInterval(() => {
+      setRenderMessageIndex((prev) => (prev + 1) % RENDER_MESSAGES.length);
+    }, 2400);
+    return () => clearInterval(interval);
+  }, [isRendering]);
 
   useEffect(() => {
     return () => {
@@ -125,6 +164,7 @@ function App() {
   const handleFileChange = (event) => {
     const selectedFile = event.target.files?.[0] ?? null;
     setFile(selectedFile);
+    setResult(null);
     setStatus("");
     setError("");
     if (trimPreviewUrl) {
@@ -134,17 +174,18 @@ function App() {
     if (selectedFile) {
       const nextUrl = URL.createObjectURL(selectedFile);
       setTrimPreviewUrl(nextUrl);
-      setTrimModalOpen(true);
+      setTrimModalOpen(false);
+      setAppState(APP_STATES.uploaded);
       processAudioForTrim(selectedFile);
     } else {
       setTrimModalOpen(false);
       setWaveformPoints([]);
       setTrimSelection({ start: 0, end: 0, active: false });
+      setAppState(APP_STATES.idle);
     }
   };
 
-  const handleSubmit = async (event) => {
-    event.preventDefault();
+  const handleSubmit = async () => {
     if (!file) {
       setError("Select an audio file first.");
       return;
@@ -160,6 +201,7 @@ function App() {
     }
     log("uploading file", file.name);
     setLoading(true);
+    setAppState(APP_STATES.rendering);
     setStatus("Uploading audio...");
     setError("");
     try {
@@ -171,10 +213,12 @@ function App() {
       const payload = await response.json();
       setResult(payload);
       setStatus("Lyric video ready!");
+      setAppState(APP_STATES.ready);
     } catch (err) {
       log("upload error", err);
       setError(err.message);
       setStatus("");
+      setAppState(APP_STATES.fontConfig);
     } finally {
       setLoading(false);
     }
@@ -240,13 +284,28 @@ function App() {
   };
 
   const openTrimModal = () => {
-    if (file) setTrimModalOpen(true);
+    if (file) {
+      setTrimModalOpen(true);
+      setAppState(APP_STATES.trimming);
+    }
   };
 
   const applyTrimSelection = () => {
     setTrimSelection({ start: modalRange.start, end: modalRange.end, active: true });
     setTrimModalOpen(false);
+    setAppState(APP_STATES.fontConfig);
   };
+
+  const handleCloseTrimModal = () => {
+    setTrimModalOpen(false);
+    if (hasResult) {
+      setAppState(APP_STATES.ready);
+      return;
+    }
+    setAppState(trimSelection.active ? APP_STATES.fontConfig : APP_STATES.uploaded);
+  };
+
+  const renderOverlayText = RENDER_MESSAGES[renderMessageIndex];
 
   return (
     <main className="app-shell">
@@ -263,9 +322,7 @@ function App() {
           </div>
           <UploadPane
             file={file}
-            loading={loading}
             onFileChange={handleFileChange}
-            onSubmit={handleSubmit}
             status={status}
             error={error}
             onOpenTrimmer={openTrimModal}
@@ -274,61 +331,71 @@ function App() {
         </div>
       </section>
 
-      {showEditorSurface && (
-        <>
-          <section className="feature-grid minimal-grid">
-            <div className="page-card focus-card">
-              <div className="section-heading minimal">
-                <h3>Typeface</h3>
-                <p>Size, family, color.</p>
-              </div>
-              <FontEditor fontSettings={fontSettings} onChange={(partial) => setFontSettings((prev) => ({ ...prev, ...partial }))} />
-              <p className="helper-text">Applies to the next render.</p>
+      {showTypeface && (
+        <section className="feature-grid minimal-grid">
+          <div className="page-card focus-card">
+            <div className="section-heading minimal">
+              <h3>Typeface</h3>
+              <p>Size, family, color.</p>
             </div>
+            <FontEditor fontSettings={fontSettings} onChange={(partial) => setFontSettings((prev) => ({ ...prev, ...partial }))} />
+            <p className="helper-text">Applies to the next render.</p>
+            <button className="primary full" type="button" onClick={handleSubmit} disabled={loading || isRendering}>
+              {loading && isRendering ? "Rendering your reel..." : "Generate video"}
+            </button>
+          </div>
+          {showPreview && (
             <div className="page-card focus-card">
               <div className="section-heading minimal">
                 <h3>Preview</h3>
                 <p>Play the render.</p>
               </div>
               {hasResult ? (
-                <VideoPreview videoUrl={result?.video_url ?? ""} videoRef={videoRef} videoTrim={videoTrim} videoDuration={videoDuration} />
+                <VideoPreview
+                  videoUrl={result?.video_url ?? ""}
+                  videoRef={videoRef}
+                  videoTrim={videoTrim}
+                  videoDuration={videoDuration}
+                />
               ) : (
                 <EmptyState title="No renders yet" body="Upload a clip to unlock the animated preview." />
               )}
             </div>
-          </section>
+          )}
+        </section>
+      )}
 
-          <section className="lyrics-stack">
-            <div className="page-card full-width">
-              <div className="section-heading minimal">
-                <h3>Lyrics</h3>
-                <p>Five words max per line.</p>
-              </div>
-              {hasResult ? (
-                <LyricsPanel
-                  visibleBars={visibleBars}
-                  extraCount={Math.max(0, editedBars.length - visibleBars.length)}
-                  setEditingIndex={setEditingIndex}
-                  editingIndex={editingIndex}
-                  handleBarTextChange={handleBarTextChange}
-                  wordPhases={wordPhases}
-                  videoRef={videoRef}
-                  removeBar={removeBar}
-                  addBar={addBar}
-                  applyChanges={applyBarChanges}
-                  loading={loading}
-                />
-              ) : (
-                <EmptyState
-                  title="Lyric grid locked"
-                  body="Once we process your track you'll be able to edit the synced bars right here."
-                  buttonLabel={file ? "Generate a take" : undefined}
-                  onAction={file ? handleSubmit : undefined}
-                />
-              )}
+      {showLyrics && (
+        <section className="lyrics-stack">
+          <div className="page-card full-width">
+            <div className="section-heading minimal">
+              <h3>Lyrics</h3>
+              <p>Five words max per line.</p>
             </div>
-          </section>
-        </>
+            {hasResult ? (
+              <LyricsPanel
+                visibleBars={visibleBars}
+                extraCount={Math.max(0, editedBars.length - visibleBars.length)}
+                setEditingIndex={setEditingIndex}
+                editingIndex={editingIndex}
+                handleBarTextChange={handleBarTextChange}
+                wordPhases={wordPhases}
+                videoRef={videoRef}
+                removeBar={removeBar}
+                addBar={addBar}
+                applyChanges={applyBarChanges}
+                loading={loading}
+              />
+            ) : (
+              <EmptyState
+                title="Lyric grid locked"
+                body="Once we process your track you'll be able to edit the synced bars right here."
+                buttonLabel={file ? "Generate a take" : undefined}
+                onAction={file ? handleSubmit : undefined}
+              />
+            )}
+          </div>
+        </section>
       )}
       <TrimModal
         open={trimModalOpen}
@@ -337,7 +404,7 @@ function App() {
         setModalRange={setModalRange}
         applyTrim={applyTrimSelection}
         audioDuration={audioDuration}
-        onClose={() => setTrimModalOpen(false)}
+        onClose={handleCloseTrimModal}
         waveformPoints={waveformPoints}
         trimLimits={TRIM_LIMITS}
         onDurationDiscovered={(duration) => {
@@ -347,6 +414,21 @@ function App() {
           }
         }}
       />
+      {isRendering && (
+        <div className="rendering-overlay">
+          <div className="rendering-card">
+            <div className="logo-pill logo-main logo-animated">Vibr</div>
+            <p className="rendering-text">
+              {renderOverlayText}
+              <span className="ellipsis" aria-hidden="true">
+                <span />
+                <span />
+                <span />
+              </span>
+            </p>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
