@@ -12,6 +12,9 @@ function LyricsPanel({
   addBar,
   applyChanges,
   loading,
+  showAllBars,
+  onToggleAll,
+  totalBars,
 }) {
   return (
     <div className="lyrics-panel">
@@ -20,9 +23,14 @@ function LyricsPanel({
           <h3>Rendered lyrics</h3>
           <p className="subtitle">Double-tap to edit a bar and keep everything in sync.</p>
         </div>
-        <button className="ghost-button" onClick={addBar} type="button">
-          + Add lyric
-        </button>
+        <div className="panel-controls">
+          <button className="ghost-button" onClick={onToggleAll} type="button" disabled={!totalBars || totalBars <= 4}>
+            {showAllBars ? "Collapse view" : `Show all (${totalBars})`}
+          </button>
+          <button className="ghost-button" onClick={addBar} type="button">
+            + Add lyric
+          </button>
+        </div>
       </div>
       <ol>
         {visibleBars.length === 0 && <li className="lyric-tip">Generate a take to unlock the lyric grid.</li>}

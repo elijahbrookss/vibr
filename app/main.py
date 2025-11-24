@@ -10,11 +10,13 @@ import uuid
 import shutil
 import subprocess
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import whisper
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from moviepy.audio.io.AudioFileClip import AudioFileClip
 from moviepy.video.VideoClip import ColorClip, TextClip
@@ -129,6 +131,15 @@ def write_output_metadata(data: Dict[str, Any], output_dir: Path) -> None:
     metadata_path.parent.mkdir(parents=True, exist_ok=True)
     with metadata_path.open("w", encoding="utf-8") as metadata_file:
         json.dump(data, metadata_file)
+
+
+def stream_event(event_type: str, **payload: Any) -> bytes:
+    data = {
+        "type": event_type,
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        **{key: value for key, value in payload.items() if value is not None},
+    }
+    return (json.dumps(data) + "\n").encode("utf-8")
 
 
 def trim_audio_segment(source: Path, start: float, end: float) -> Path:
@@ -430,124 +441,248 @@ async def process_audio(
     if not file.content_type or not file.content_type.startswith("audio"):
         raise HTTPException(status_code=400, detail="Only audio files are supported.")
 
-    temp_audio_path = Path(tempfile.gettempdir()) / f"{uuid.uuid4().hex}{Path(file.filename).suffix}"
-    await save_upload_file(file, temp_audio_path)
-    audio_hash = hash_file(temp_audio_path)
     if trim_start is not None:
         trim_start = max(0.0, trim_start)
     if trim_end is not None:
         trim_end = max(0.0, trim_end)
-    cache_key = build_cache_key(audio_hash, trim_start, trim_end)
-    cached_output = get_cached_output(cache_key)
-    if cached_output:
-        cached_dir = OUTPUT_ROOT / cached_output
-        cached_video = cached_dir / "lyrics.mp4"
-        cached_lyrics = cached_dir / "lyrics.txt"
-        cached_bars = load_bars_metadata(cached_dir)
-        cached_metadata = load_output_metadata(cached_dir)
-        if cached_video.exists() and cached_lyrics.exists():
-            LOGGER.info("cache hit, returning existing assets", extra={"cache_key": audio_hash})
-            response = {
-                "lyrics_url": f"/static/outputs/{cached_output}/lyrics.txt",
-                "video_url": f"/static/outputs/{cached_output}/lyrics.mp4",
-                "output_id": cached_output,
-            }
-            if cached_bars:
-                response["bars"] = cached_bars
-            if cached_metadata:
-                response["metadata"] = cached_metadata
-            return response
-    LOGGER.info("saved upload", extra={"path": str(temp_audio_path), "size_bytes": temp_audio_path.stat().st_size})
-    selected_audio_path = temp_audio_path
+
+    temp_audio_path = Path(tempfile.gettempdir()) / f"{uuid.uuid4().hex}{Path(file.filename).suffix}"
     trimmed_audio_path: Optional[Path] = None
-    trim_requested = trim_start is not None and trim_end is not None and trim_end > trim_start
-    try:
-        if trim_requested:
-            assert trim_start is not None and trim_end is not None
-            try:
-                trimmed_audio_path = trim_audio_segment(temp_audio_path, trim_start, trim_end)
-                selected_audio_path = trimmed_audio_path
-                LOGGER.info(
-                    "trimmed audio",
-                    extra={
-                        "start": trim_start,
-                        "end": trim_end,
-                        "trimmed_path": str(trimmed_audio_path),
-                    },
+
+    async def event_stream():
+        nonlocal trimmed_audio_path
+        try:
+            await save_upload_file(file, temp_audio_path)
+            LOGGER.info(
+                "saved upload",
+                extra={"path": str(temp_audio_path), "size_bytes": temp_audio_path.stat().st_size},
+            )
+            yield stream_event(
+                "status",
+                stage="upload",
+                label="Upload received",
+                detail=file.filename,
+                state="complete",
+            )
+
+            audio_hash = hash_file(temp_audio_path)
+            cache_key = build_cache_key(audio_hash, trim_start, trim_end)
+            cached_output = get_cached_output(cache_key)
+            if cached_output:
+                cached_dir = OUTPUT_ROOT / cached_output
+                cached_video = cached_dir / "lyrics.mp4"
+                cached_lyrics = cached_dir / "lyrics.txt"
+                cached_bars = load_bars_metadata(cached_dir)
+                cached_metadata = load_output_metadata(cached_dir)
+                if cached_video.exists() and cached_lyrics.exists():
+                    LOGGER.info("cache hit, returning existing assets", extra={"cache_key": cache_key})
+                    response = {
+                        "lyrics_url": f"/static/outputs/{cached_output}/lyrics.txt",
+                        "video_url": f"/static/outputs/{cached_output}/lyrics.mp4",
+                        "output_id": cached_output,
+                    }
+                    if cached_bars:
+                        response["bars"] = cached_bars
+                    if cached_metadata:
+                        response["metadata"] = cached_metadata
+                    yield stream_event(
+                        "status",
+                        stage="cache",
+                        label="Cache hit",
+                        detail="Reusing existing render",
+                        state="complete",
+                    )
+                    yield stream_event("result", payload=response)
+                    return
+
+            yield stream_event(
+                "status",
+                stage="cache",
+                label="No cache hit",
+                detail="Generating a fresh render",
+                state="complete",
+            )
+
+            selected_audio_path = temp_audio_path
+            trim_requested = (
+                trim_start is not None and trim_end is not None and trim_end > trim_start
+            )
+            if trim_requested:
+                assert trim_start is not None and trim_end is not None
+                try:
+                    yield stream_event(
+                        "status",
+                        stage="trim",
+                        label="Clipping audio",
+                        detail=f"{trim_start:.1f}s → {trim_end:.1f}s",
+                        state="running",
+                    )
+                    trimmed_audio_path = trim_audio_segment(temp_audio_path, trim_start, trim_end)
+                    selected_audio_path = trimmed_audio_path
+                    LOGGER.info(
+                        "trimmed audio",
+                        extra={
+                            "start": trim_start,
+                            "end": trim_end,
+                            "trimmed_path": str(trimmed_audio_path),
+                        },
+                    )
+                    yield stream_event(
+                        "status",
+                        stage="trim",
+                        label="Clip locked",
+                        detail=f"{trim_end - trim_start:.1f}s segment",
+                        state="complete",
+                    )
+                except ValueError as exc:
+                    yield stream_event("error", message=str(exc))
+                    return
+
+            model = get_whisper_model()
+            yield stream_event(
+                "status",
+                stage="transcription",
+                label="Transcribing + timestamping lyrics",
+                state="running",
+            )
+            start_transcription = time.time()
+            transcription = model.transcribe(
+                str(selected_audio_path), word_timestamps=True, verbose=False
+            )
+            duration_ms = (time.time() - start_transcription) * 1000
+            LOGGER.info(
+                "transcription complete",
+                extra={
+                    "duration_ms": f"{duration_ms:.2f}",
+                    "segments": len(transcription.get("segments", [])),
+                },
+            )
+            yield stream_event(
+                "status",
+                stage="transcription",
+                label="Transcription finished",
+                detail=f"{len(transcription.get('segments', []))} segments",
+                state="complete",
+            )
+
+            words = extract_words(transcription)
+            LOGGER.info("extracted words", extra={"count": len(words)})
+            yield stream_event(
+                "status",
+                stage="words",
+                label="Word timings extracted",
+                detail=f"{len(words)} words",
+                state="complete",
+            )
+            bars = split_into_bars(words)
+            LOGGER.info("split into bars", extra={"bars": len(bars)})
+            yield stream_event(
+                "status",
+                stage="bars",
+                label="Lyric bursts generated",
+                detail=f"{len(bars)} bars",
+                state="complete",
+            )
+            if not bars:
+                yield stream_event(
+                    "error",
+                    message="No lyrics detected in the provided audio.",
                 )
-            except ValueError as exc:
-                raise HTTPException(status_code=400, detail=str(exc))
-        model = get_whisper_model()
-        start_transcription = time.time()
-        transcription = model.transcribe(str(selected_audio_path), word_timestamps=True, verbose=False)
-        duration_ms = (time.time() - start_transcription) * 1000
-        LOGGER.info("transcription complete", extra={"duration_ms": f"{duration_ms:.2f}", "segments": len(transcription.get("segments", []))})
+                return
 
-        words = extract_words(transcription)
-        LOGGER.info("extracted words", extra={"count": len(words)})
-        bars = split_into_bars(words)
-        LOGGER.info("split into bars", extra={"bars": len(bars)})
-        if not bars:
-            raise HTTPException(status_code=400, detail="No lyrics detected in the provided audio.")
+            output_id = uuid.uuid4().hex
+            output_dir = OUTPUT_ROOT / output_id
+            output_dir.mkdir(parents=True, exist_ok=True)
+            lyrics_path = output_dir / "lyrics.txt"
+            video_path = output_dir / "lyrics.mp4"
 
-        output_id = uuid.uuid4().hex
-        output_dir = OUTPUT_ROOT / output_id
-        output_dir.mkdir(parents=True, exist_ok=True)
+            yield stream_event(
+                "status",
+                stage="lyrics",
+                label="Writing lyric sheet",
+                state="running",
+            )
+            build_lyrics_file(bars, lyrics_path)
+            LOGGER.info("lyrics file written", extra={"path": str(lyrics_path)})
+            yield stream_event(
+                "status",
+                stage="lyrics",
+                label="Lyric sheet saved",
+                state="complete",
+            )
 
-        lyrics_path = output_dir / "lyrics.txt"
-        video_path = output_dir / "lyrics.mp4"
+            total_duration = max((bar.end for bar in bars), default=0.5)
+            effective_font_size = (
+                int(font_size) if font_size and font_size > 0 else DEFAULT_FONT_SIZE
+            )
+            yield stream_event(
+                "status",
+                stage="render",
+                label="Rendering lyric video",
+                state="running",
+            )
+            used_font = build_lyric_video(
+                bars,
+                video_path,
+                selected_audio_path,
+                font_family=font_family or DEFAULT_FONT_FAMILY,
+                font_size=effective_font_size,
+                font_color=font_color or DEFAULT_FONT_COLOR,
+            )
+            LOGGER.info("video file written", extra={"path": str(video_path)})
+            yield stream_event(
+                "status",
+                stage="render",
+                label="Render complete",
+                detail=f"{total_duration:.1f}s timeline",
+                state="complete",
+            )
 
-        build_lyrics_file(bars, lyrics_path)
-        LOGGER.info("lyrics file written", extra={"path": str(lyrics_path)})
-        total_duration = max((bar.end for bar in bars), default=0.5)
-        effective_font_size = int(font_size) if font_size and font_size > 0 else DEFAULT_FONT_SIZE
-        used_font = build_lyric_video(
-            bars,
-            video_path,
-            selected_audio_path,
-            font_family=font_family or DEFAULT_FONT_FAMILY,
-            font_size=effective_font_size,
-            font_color=font_color or DEFAULT_FONT_COLOR,
-        )
-        LOGGER.info("video file written", extra={"path": str(video_path)})
-        audio_store_path = output_dir / "audio.wav"
-        stored_audio = trim_audio_segment(selected_audio_path, 0.0, total_duration)
-        shutil.move(str(stored_audio), str(audio_store_path))
-        metadata = {
-            "audio_path": "audio.wav",
-            "video_duration": float(total_duration),
-            "video_trim": {"start": 0.0, "end": float(total_duration)},
-            "font": {
-                "family": used_font,
-                "size": effective_font_size,
-                "color": font_color or DEFAULT_FONT_COLOR,
-            },
-        }
-        write_output_metadata(metadata, output_dir)
-        set_cached_output(cache_key, output_id)
+            audio_store_path = output_dir / "audio.wav"
+            stored_audio = trim_audio_segment(selected_audio_path, 0.0, total_duration)
+            shutil.move(str(stored_audio), str(audio_store_path))
+            metadata = {
+                "audio_path": "audio.wav",
+                "video_duration": float(total_duration),
+                "video_trim": {"start": 0.0, "end": float(total_duration)},
+                "font": {
+                    "family": used_font,
+                    "size": effective_font_size,
+                    "color": font_color or DEFAULT_FONT_COLOR,
+                },
+            }
+            write_output_metadata(metadata, output_dir)
+            set_cached_output(cache_key, output_id)
+            yield stream_event(
+                "status",
+                stage="store",
+                label="Assets saved",
+                detail="Metadata + cache updated",
+                state="complete",
+            )
 
-        # Prepare bars data for frontend (text + timestamps)
-        bars_payload = build_bars_payload(bars, words)
+            bars_payload = build_bars_payload(bars, words)
+            write_bars_metadata(bars_payload, output_dir)
+            response_payload = {
+                "lyrics_url": f"/static/outputs/{output_id}/lyrics.txt",
+                "video_url": f"/static/outputs/{output_id}/lyrics.mp4",
+                "bars": bars_payload,
+                "metadata": metadata,
+                "output_id": output_id,
+            }
+            yield stream_event("result", payload=response_payload)
+        except HTTPException as exc:
+            yield stream_event("error", message=exc.detail)
+        except Exception:
+            LOGGER.exception("unexpected failure during processing")
+            yield stream_event("error", message="Internal server error")
+        finally:
+            if temp_audio_path.exists():
+                temp_audio_path.unlink()
+            if trimmed_audio_path and trimmed_audio_path.exists():
+                trimmed_audio_path.unlink()
 
-        write_bars_metadata(bars_payload, output_dir)
-
-        return {
-            "lyrics_url": f"/static/outputs/{output_id}/lyrics.txt",
-            "video_url": f"/static/outputs/{output_id}/lyrics.mp4",
-            "bars": bars_payload,
-            "metadata": metadata,
-            "output_id": output_id,
-        }
-    except HTTPException:
-        raise
-    except Exception:
-        LOGGER.exception("unexpected failure during processing")
-        raise HTTPException(status_code=500, detail="Internal server error")
-    finally:
-        if temp_audio_path.exists():
-            temp_audio_path.unlink()
-        if trimmed_audio_path and trimmed_audio_path.exists():
-            trimmed_audio_path.unlink()
+    return StreamingResponse(event_stream(), media_type="application/x-ndjson")
 
 
 class UpdatePayload(BaseModel):
