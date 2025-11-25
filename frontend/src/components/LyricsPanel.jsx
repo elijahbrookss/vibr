@@ -15,6 +15,7 @@ function LyricsPanel({
   videoRef,
   applyChanges,
   loading,
+  playbackTime,
 }) {
   const seekTo = (time) => {
     if (videoRef?.current) {
@@ -121,18 +122,31 @@ function LyricsPanel({
         <div className="chunk-list">
           {visibleChunks.map((chunk, idx) => {
             const isActive = chunk.words?.some((w) => w.id === activeWordId);
+            const chunkLive = playbackTime >= chunk.start && playbackTime <= chunk.end + 0.01;
             return (
               <div key={`${chunk.start}-${idx}`} className={`chunk-card ${isActive ? "active" : ""}`}>
                 <div className="chunk-times">
                   <span>{formatTimestamp(chunk.start, { milliseconds: true })}</span>
                   <span>{formatTimestamp(chunk.end, { milliseconds: true })}</span>
                 </div>
-                <div className={`bar-words animated anim-${overlayStyle?.["--overlay-animation"]}`}>
-                  {chunk.words?.map((word) => (
-                    <span key={word.id} className={`word-chip ${activeWordId === word.id ? "active" : ""}`}>
-                      {word.text}
-                    </span>
-                  ))}
+                <div
+                  className={`bar-words animated anim-${overlayStyle?.["--overlay-animation"]} ${
+                    chunkLive ? "typewriter" : ""
+                  }`}
+                >
+                  {chunk.words?.map((word) => {
+                    const wordVisible = !chunkLive || playbackTime + 0.0001 >= word.start;
+                    return (
+                      <span
+                        key={word.id}
+                        className={`word-chip ${activeWordId === word.id ? "active" : ""} ${
+                          wordVisible ? "visible" : "pending"
+                        }`}
+                      >
+                        {word.text}
+                      </span>
+                    );
+                  })}
                 </div>
               </div>
             );

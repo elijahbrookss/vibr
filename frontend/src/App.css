@@ -822,6 +822,21 @@
   animation-delay: 180ms;
 }
 
+.bar-words.typewriter .word-chip {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+.bar-words.typewriter .word-chip.visible {
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.bar-words.typewriter .word-chip.pending {
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
 @keyframes fadeUp {
   from {
     opacity: 0;

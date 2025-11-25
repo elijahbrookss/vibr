@@ -356,11 +356,14 @@ def build_lyrics_file(chunks: List[LyricChunk], destination: Path) -> None:
             lyrics_file.write(f"{chunk.text}\n")
 
 
-def _build_safe_text_clip(chunk: LyricChunk, font_family: str, font_size: int, font_color: str) -> tuple[TextClip, str]:
+def _build_safe_text_clip(
+    chunk: LyricChunk, font_family: str, font_size: int, font_color: str
+) -> tuple[TextClip, str, int, tuple[int, int]]:
     safe_width = int(VIDEO_SIZE[0] * SAFE_AREA_WIDTH_RATIO)
     safe_height = int(VIDEO_SIZE[1] * SAFE_AREA_HEIGHT_RATIO)
     chosen_font = font_family
     current_size = font_size
+    picked_size = current_size
     last_clip: Optional[TextClip] = None
     while current_size >= MIN_FONT_SIZE:
         try:
@@ -378,8 +381,9 @@ def _build_safe_text_clip(chunk: LyricChunk, font_family: str, font_size: int, f
             current_size = current_size - 2
             continue
         last_clip = clip
+        picked_size = current_size
         if clip.w <= safe_width and clip.h <= safe_height:
-            return clip, chosen_font or FALLBACK_FONT_FAMILY
+            return clip, chosen_font or FALLBACK_FONT_FAMILY, picked_size, (safe_width, safe_height)
         current_size -= 2
     if last_clip is None:
         last_clip = TextClip(
@@ -389,7 +393,8 @@ def _build_safe_text_clip(chunk: LyricChunk, font_family: str, font_size: int, f
             size=(safe_width, safe_height),
             method="caption",
         )
-    return last_clip, chosen_font or FALLBACK_FONT_FAMILY
+        picked_size = MIN_FONT_SIZE
+    return last_clip, chosen_font or FALLBACK_FONT_FAMILY, picked_size, (safe_width, safe_height)
 
 
 def build_lyric_video(
@@ -407,10 +412,40 @@ def build_lyric_video(
     text_clips = []
     font_used = font_family
     for chunk in chunks:
-        chunk_duration = max(chunk.end - chunk.start, 0.5)
-        text_clip, used_font = _build_safe_text_clip(chunk, font_used, font_size, font_color)
-        text_clip = text_clip.with_start(chunk.start).with_duration(chunk_duration).with_position("center")
-        text_clips.append(text_clip)
+        if not chunk.words:
+            continue
+        text_clip, used_font, resolved_size, safe_dimensions = _build_safe_text_clip(
+            chunk, font_used, font_size, font_color
+        )
+        prefix_clips: list[TextClip] = []
+        for idx, word in enumerate(chunk.words):
+            prefix_text = " ".join(w.text for w in chunk.words[: idx + 1])
+            try:
+                word_clip = TextClip(
+                    text=prefix_text,
+                    font_size=resolved_size,
+                    font=used_font,
+                    color=font_color,
+                    size=safe_dimensions,
+                    method="caption",
+                )
+            except ValueError:
+                LOGGER.warning("word clip font fallback", extra={"font": used_font})
+                word_clip = TextClip(
+                    text=prefix_text,
+                    font_size=resolved_size,
+                    color=font_color,
+                    size=safe_dimensions,
+                    method="caption",
+                )
+            word_clip = (
+                word_clip.with_start(word.start)
+                .with_duration(max(chunk.end - word.start, 0.2))
+                .with_position("center")
+            )
+            prefix_clips.append(word_clip)
+        text_clip.close()
+        text_clips.extend(prefix_clips)
         font_used = used_font
 
     if not text_clips:

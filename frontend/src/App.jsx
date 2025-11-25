@@ -125,6 +125,7 @@ function App() {
   const [wordError, setWordError] = useState("");
   const [rowErrors, setRowErrors] = useState({});
   const [activeWordId, setActiveWordId] = useState("");
+  const [playbackTime, setPlaybackTime] = useState(0);
   const [clientLogs, setClientLogs] = useState([]);
   const [consoleOpen, setConsoleOpen] = useState(false);
   const renderDurationRef = useRef([]);
@@ -248,11 +249,13 @@ function App() {
     const node = videoRef.current;
     if (!node) {
       setActiveWordId("");
+      setPlaybackTime(0);
       return undefined;
     }
     const handleTimeUpdate = () => {
       const currentTime = node.currentTime ?? 0;
       const active = orderedWords.find((word) => currentTime >= word.start && currentTime < word.end);
+      setPlaybackTime(currentTime);
       setActiveWordId(active?.id ?? "");
     };
     node.addEventListener("timeupdate", handleTimeUpdate);
@@ -643,6 +646,7 @@ function App() {
                 videoRef={videoRef}
                 applyChanges={applyWordChanges}
                 loading={loading}
+                playbackTime={playbackTime}
               />
             ) : (
               <EmptyState
