@@ -15,18 +15,12 @@ function LyricsPanel({
   videoRef,
   applyChanges,
   loading,
-  logs = [],
-  onClearLogs,
 }) {
   const seekTo = (time) => {
     if (videoRef?.current) {
       videoRef.current.currentTime = Math.max(0, time ?? 0);
     }
   };
-  const clearLogs = () => {
-    if (onClearLogs) onClearLogs();
-  };
-
   const hasWords = words.length > 0;
   return (
     <div className="lyrics-panel" style={overlayStyle}>
@@ -61,22 +55,22 @@ function LyricsPanel({
                 />
                 <input
                   type="number"
-                  step="0.001"
+                  step="0.01"
                   min="0"
                   inputMode="decimal"
                   className="time-input"
-                  value={Number.isFinite(word.start) ? word.start.toFixed(3) : "0.000"}
+                  value={Number.isFinite(word.start) ? word.start.toFixed(2) : "0.00"}
                   onClick={(event) => event.stopPropagation()}
                   onChange={(event) => onWordTimeChange(word.id, "start", event.target.value)}
                   aria-label={`Set start for ${word.text}`}
                 />
                 <input
                   type="number"
-                  step="0.001"
+                  step="0.01"
                   min="0"
                   inputMode="decimal"
                   className="time-input"
-                  value={Number.isFinite(word.end) ? word.end.toFixed(3) : "0.000"}
+                  value={Number.isFinite(word.end) ? word.end.toFixed(2) : "0.00"}
                   onClick={(event) => event.stopPropagation()}
                   onChange={(event) => onWordTimeChange(word.id, "end", event.target.value)}
                   aria-label={`Set end for ${word.text}`}
@@ -144,35 +138,6 @@ function LyricsPanel({
             );
           })}
         </div>
-      </div>
-      <div className="client-log">
-        <div className="client-log-header">
-            <h4>Activity & errors</h4>
-            <div className="client-log-actions">
-              <span className="client-log-hint">Newest first. Keeps the last 40 events.</span>
-              <button type="button" className="ghost" onClick={clearLogs} disabled={!logs.length}>
-                Clear
-              </button>
-            </div>
-        </div>
-        {logs.length === 0 ? (
-          <p className="lyric-tip">Actions, warnings, and API errors will appear here.</p>
-        ) : (
-          <ul className="client-log-list" aria-live="polite">
-            {logs.slice(0, 12).map((entry) => (
-              <li key={entry.id} className={`client-log-entry level-${entry.level}`}>
-                <div className="client-log-meta">
-                  <span className="client-log-level">{entry.level}</span>
-                  <span className="client-log-time">{new Date(entry.at).toLocaleTimeString()}</span>
-                </div>
-                <div className="client-log-message">{entry.message}</div>
-                {entry.meta && (
-                  <pre className="client-log-meta-block">{JSON.stringify(entry.meta, null, 2)}</pre>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
       </div>
       <div className="update-actions">
         <button className="primary" onClick={applyChanges} disabled={loading}>

@@ -126,6 +126,7 @@ function App() {
   const [rowErrors, setRowErrors] = useState({});
   const [activeWordId, setActiveWordId] = useState("");
   const [clientLogs, setClientLogs] = useState([]);
+  const [consoleOpen, setConsoleOpen] = useState(false);
   const renderDurationRef = useRef([]);
   const renderTimerRef = useRef(null);
   const videoRef = useRef(null);
@@ -639,8 +640,6 @@ function App() {
                 videoRef={videoRef}
                 applyChanges={applyWordChanges}
                 loading={loading}
-                logs={clientLogs}
-                onClearLogs={() => setClientLogs([])}
               />
             ) : (
               <EmptyState
@@ -715,6 +714,50 @@ function App() {
           }
         }}
       />
+      <button
+        type="button"
+        className={`log-fab ${consoleOpen ? "active" : ""}`}
+        onClick={() => setConsoleOpen((prev) => !prev)}
+        aria-expanded={consoleOpen}
+        aria-label="Toggle activity console"
+      >
+        <span className="log-fab-icon" aria-hidden="true">⌘</span>
+        {clientLogs.length > 0 && <span className="log-fab-count">{Math.min(clientLogs.length, 99)}</span>}
+      </button>
+      <div className={`client-log-flyout ${consoleOpen ? "open" : ""}`} aria-live="polite">
+        <div className="client-log-header">
+          <div>
+            <h4>Activity & errors</h4>
+            <span className="client-log-hint">Newest first. Keeps the last 40 events.</span>
+          </div>
+          <div className="client-log-actions">
+            <button type="button" className="ghost" onClick={() => setClientLogs([])} disabled={!clientLogs.length}>
+              Clear
+            </button>
+            <button type="button" className="ghost" onClick={() => setConsoleOpen(false)}>
+              Close
+            </button>
+          </div>
+        </div>
+        {clientLogs.length === 0 ? (
+          <p className="lyric-tip">Actions, warnings, and API errors will appear here.</p>
+        ) : (
+          <ul className="client-log-list" aria-live="polite">
+            {clientLogs.slice(0, 20).map((entry) => (
+              <li key={entry.id} className={`client-log-entry level-${entry.level}`}>
+                <div className="client-log-meta">
+                  <span className="client-log-level">{entry.level}</span>
+                  <span className="client-log-time">{new Date(entry.at).toLocaleTimeString()}</span>
+                </div>
+                <div className="client-log-message">{entry.message}</div>
+                {entry.meta && (
+                  <pre className="client-log-meta-block">{JSON.stringify(entry.meta, null, 2)}</pre>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
       {isRendering && (
         <div className="rendering-overlay">
           <div className="rendering-card rendering-console">

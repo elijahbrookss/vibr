@@ -201,7 +201,7 @@
 
 .word-grid-header {
   display: grid;
-  grid-template-columns: 2fr 1.1fr 1.1fr 0.9fr;
+  grid-template-columns: 2.6fr 1fr 1fr 0.9fr;
   gap: 0.5rem;
   font-size: 0.85rem;
   color: var(--muted);
@@ -245,7 +245,7 @@
 
 .word-row {
   display: grid;
-  grid-template-columns: 2fr 1.1fr 1.1fr 0.9fr;
+  grid-template-columns: 2.6fr 1fr 1fr 0.9fr;
   gap: 0.5rem;
   align-items: center;
   padding: 0.6rem 0.75rem;
@@ -279,7 +279,7 @@
 .time-input {
   font-family: "JetBrains Mono", "SFMono-Regular", ui-monospace, monospace;
   font-variant-numeric: tabular-nums;
-  min-width: 120px;
+  min-width: 110px;
   text-align: right;
 }
 
@@ -971,6 +971,96 @@
   font-size: 0.8rem;
   color: var(--muted);
   overflow: auto;
+}
+
+.log-fab {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.04));
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+  z-index: 20;
+}
+
+.log-fab:hover {
+  transform: translateY(-2px);
+  border-color: rgba(138, 143, 247, 0.7);
+  box-shadow: 0 16px 38px rgba(0, 0, 0, 0.45);
+}
+
+.log-fab.active {
+  border-color: rgba(138, 143, 247, 0.9);
+}
+
+.log-fab-icon {
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.log-fab-count {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  background: rgba(239, 68, 68, 0.9);
+  color: #fff;
+  border-radius: 999px;
+  padding: 0 6px;
+  font-size: 0.75rem;
+  line-height: 1.3;
+  min-width: 24px;
+  text-align: center;
+  box-shadow: 0 0 0 2px rgba(7, 9, 15, 0.85);
+}
+
+.client-log-flyout {
+  position: fixed;
+  right: 24px;
+  bottom: 88px;
+  width: min(440px, calc(100% - 32px));
+  max-height: 460px;
+  padding: 1rem;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(13, 16, 24, 0.95);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(12px);
+  overflow: hidden;
+  opacity: 0;
+  transform: translateY(10px);
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  z-index: 19;
+}
+
+.client-log-flyout.open {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.client-log-flyout .client-log-list {
+  max-height: 320px;
+  overflow-y: auto;
+  padding-right: 0.25rem;
+}
+
+.client-log-flyout .client-log-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.client-log-flyout .client-log-list::-webkit-scrollbar-thumb {
+  background: rgba(138, 143, 247, 0.6);
+  border-radius: 999px;
 }
 
 .update-actions {
