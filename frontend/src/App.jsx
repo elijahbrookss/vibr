@@ -528,9 +528,12 @@ function App() {
       appendLog("success", "Lyric edits applied", { outputId: payload?.output_id, words: editedWords.length });
       setAppState(APP_STATES.ready);
     } catch (err) {
-      appendLog("error", "Lyric update failed", { message: err?.message });
-      setError(err.message || "Update failed");
-      setWordError(err.message);
+      const friendlyMessage = (err?.message || "").includes("Output not found")
+        ? "We can’t find this render on the server. Please generate a new video before editing."
+        : err?.message || "Update failed";
+      appendLog("error", "Lyric update failed", { message: friendlyMessage });
+      setError(friendlyMessage);
+      setWordError(friendlyMessage);
       setAppState(APP_STATES.ready);
     } finally {
       setLoading(false);

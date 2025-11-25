@@ -201,12 +201,24 @@
 
 .word-grid-header {
   display: grid;
-  grid-template-columns: 3.25fr 0.85fr 0.85fr 0.9fr;
+  grid-template-columns: 3.6fr 0.7fr 0.7fr 0.8fr;
   gap: 0.5rem;
   font-size: 0.85rem;
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.05em;
+}
+
+.word-grid-header .col-word {
+  text-align: left;
+}
+
+.word-grid-header .col-time {
+  text-align: center;
+}
+
+.word-grid-header .word-actions-col {
+  text-align: center;
 }
 
 .word-grid-body {
@@ -245,7 +257,7 @@
 
 .word-row {
   display: grid;
-  grid-template-columns: 3.25fr 0.85fr 0.85fr 0.9fr;
+  grid-template-columns: 3.6fr 0.7fr 0.7fr 0.8fr;
   gap: 0.5rem;
   align-items: center;
   padding: 0.6rem 0.75rem;

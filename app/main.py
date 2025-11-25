@@ -604,7 +604,11 @@ class UpdatePayload(BaseModel):
 def update_output(payload: UpdatePayload):
     output_dir = OUTPUT_ROOT / payload.output_id
     if not output_dir.exists():
-        raise HTTPException(status_code=404, detail="Output not found.")
+        LOGGER.warning("update requested for missing output", extra={"output_id": payload.output_id})
+        raise HTTPException(
+            status_code=404,
+            detail="Output not found. Please regenerate your video before applying edits.",
+        )
 
     metadata = load_output_metadata(output_dir)
     audio_path = output_dir / metadata.get("audio_path", "audio.wav")

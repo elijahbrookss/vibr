@@ -33,9 +33,9 @@ function LyricsPanel({
       </div>
       <div className="word-grid" aria-live="polite">
         <div className="word-grid-header">
-          <span>Word</span>
-          <span>Start (s)</span>
-          <span>End (s)</span>
+          <span className="col-word">Word</span>
+          <span className="col-time">Start</span>
+          <span className="col-time">End</span>
           <span className="word-actions-col">Actions</span>
         </div>
         {!hasWords && <p className="lyric-tip">Generate a take to unlock the lyric grid.</p>}
