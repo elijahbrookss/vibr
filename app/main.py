@@ -38,7 +38,7 @@ CHUNKS_METADATA_NAME = "chunks.json"
 SAFE_AREA_WIDTH_RATIO = 0.88
 SAFE_AREA_HEIGHT_RATIO = 0.28
 MIN_FONT_SIZE = 36
-MIN_WORD_DURATION = 0.05
+MIN_WORD_DURATION = 0.03
 
 MODEL: Optional[whisper.Whisper] = None
 LOGGER = logging.getLogger("lyric_backend")

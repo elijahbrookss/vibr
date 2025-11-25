@@ -11,7 +11,7 @@ const log = (...args) => console.debug("[LyricPortal]", ...args);
 const TRIM_LIMITS = { min: 3, max: 180 };
 const MAX_WORDS_PER_CHUNK = 4;
 const MAX_GAP_BETWEEN_WORDS = 0.3;
-const MIN_WORD_DURATION = 0.05;
+const MIN_WORD_DURATION = 0.03;
 const INSERT_PADDING = 0.02;
 const APP_STATES = {
   idle: "idle",
@@ -55,7 +55,7 @@ const validateWordSequence = (words) => {
     if (word.end - word.start < MIN_WORD_DURATION) {
       return {
         valid: false,
-        message: "Each word needs at least 50ms of duration.",
+        message: "Each word needs at least 30ms of duration.",
         errorWordId: word.id,
       };
     }
