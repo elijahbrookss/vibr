@@ -885,6 +885,94 @@
   color: var(--muted);
 }
 
+.client-log {
+  margin: 1rem 0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 1rem;
+  background: radial-gradient(circle at top left, rgba(255, 255, 255, 0.04), transparent 45%),
+    rgba(255, 255, 255, 0.02);
+}
+
+.client-log-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.client-log-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.client-log-hint {
+  color: var(--muted);
+}
+
+.client-log-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.client-log-entry {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 0.75rem;
+  background: rgba(255, 255, 255, 0.02);
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.client-log-entry.level-error {
+  border-color: rgba(239, 68, 68, 0.6);
+}
+
+.client-log-entry.level-warn {
+  border-color: rgba(234, 179, 8, 0.6);
+}
+
+.client-log-entry.level-success {
+  border-color: rgba(34, 197, 94, 0.5);
+}
+
+.client-log-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.client-log-level {
+  font-weight: 700;
+}
+
+.client-log-message {
+  color: var(--text);
+  font-size: 0.95rem;
+}
+
+.client-log-meta-block {
+  margin: 0;
+  padding: 0.5rem;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 0.8rem;
+  color: var(--muted);
+  overflow: auto;
+}
+
 .update-actions {
   display: flex;
   align-items: center;

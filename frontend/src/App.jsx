@@ -125,6 +125,7 @@ function App() {
   const [wordError, setWordError] = useState("");
   const [rowErrors, setRowErrors] = useState({});
   const [activeWordId, setActiveWordId] = useState("");
+  const [clientLogs, setClientLogs] = useState([]);
   const renderDurationRef = useRef([]);
   const renderTimerRef = useRef(null);
   const videoRef = useRef(null);
@@ -149,6 +150,30 @@ function App() {
   const showPreview = isReady;
   const showLyrics = isReady;
 
+  const appendLog = useCallback((level, message, meta = null) => {
+    const entry = {
+      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      level,
+      message,
+      meta,
+      at: new Date().toISOString(),
+    };
+    log(level, message, meta ?? "");
+    setClientLogs((prev) => [entry, ...prev].slice(0, 40));
+  }, []);
+
+  const parseApiError = useCallback(async (response) => {
+    let bodyMessage = "";
+    try {
+      const payload = await response.json();
+      bodyMessage = payload?.detail || payload?.error || payload?.message || "";
+    } catch (err) {
+      log("parse error body failed", err);
+    }
+    const fallback = `${response.status} ${response.statusText || ""}`.trim();
+    return bodyMessage || fallback || "Request failed";
+  }, []);
+
   useEffect(() => {
     if (!result) {
       setEditedWords([]);
@@ -158,6 +183,7 @@ function App() {
       setWordError("");
       setRowErrors({});
       setActiveWordId("");
+      setClientLogs([]);
       if (!file) {
         setAppState(APP_STATES.idle);
       }
@@ -265,11 +291,12 @@ function App() {
       await audioCtx.close();
     } catch (err) {
       log("waveform error", err);
+      appendLog("error", "Waveform extraction failed", { reason: err?.message });
       setWaveformPoints([]);
       setAudioDuration(0);
       setModalRange({ start: 0, end: 0 });
     }
-  }, []);
+  }, [appendLog]);
 
   const handleFileChange = (event) => {
     const selectedFile = event.target.files?.[0] ?? null;
@@ -283,6 +310,7 @@ function App() {
       setTrimPreviewUrl("");
     }
     if (selectedFile) {
+      appendLog("info", "Selected audio file", { name: selectedFile.name, size: selectedFile.size });
       const nextUrl = URL.createObjectURL(selectedFile);
       setTrimPreviewUrl(nextUrl);
       setTrimModalOpen(false);
@@ -310,7 +338,11 @@ function App() {
       formData.append("trim_start", trimSelection.start.toString());
       formData.append("trim_end", trimSelection.end.toString());
     }
-    log("uploading file", file.name);
+    appendLog("info", "Starting render request", {
+      endpoint: "/api/process",
+      file: file.name,
+      trim: trimSelection.active ? `${trimSelection.start}-${trimSelection.end}` : "full",
+    });
     setLoading(true);
     setAppState(APP_STATES.rendering);
     setStatus("Uploading audio...");
@@ -320,14 +352,19 @@ function App() {
         method: "POST",
         body: formData,
       });
-      if (!response.ok) throw new Error("Upload failed");
+      if (!response.ok) {
+        const message = await parseApiError(response);
+        appendLog("error", "Render request rejected", { message });
+        throw new Error(message);
+      }
       const payload = await response.json();
       setResult(payload);
       setStatus("Lyric video ready!");
+      appendLog("success", "Render completed", { outputId: payload?.output_id });
       setAppState(APP_STATES.ready);
     } catch (err) {
-      log("upload error", err);
-      setError(err.message);
+      appendLog("error", "Render failed", { message: err?.message });
+      setError(err.message || "Upload failed");
       setStatus("");
       setAppState(APP_STATES.fontConfig);
     } finally {
@@ -356,6 +393,7 @@ function App() {
         const validation = validateWordSequence(next);
         if (!validation.valid) {
           setWordError(validation.message);
+          appendLog("warn", "Word validation failed", { message: validation.message, wordId: validation.errorWordId });
           if (validation.errorWordId) {
             flagRowError(validation.errorWordId, validation.message);
           }
@@ -372,11 +410,12 @@ function App() {
         return validation.ordered;
       });
     },
-    [flagRowError]
+    [flagRowError, appendLog]
   );
 
   const handleWordTextChange = (id, text) => {
     updateWordsSafely((prev) => prev.map((word) => (word.id === id ? { ...word, text } : word)));
+    appendLog("info", "Edited word text", { wordId: id, text });
   };
 
   const handleWordTimingChange = (id, key, rawValue) => {
@@ -384,9 +423,11 @@ function App() {
     if (!Number.isFinite(numeric)) {
       setWordError("Enter a numeric timestamp in seconds.");
       flagRowError(id, "Enter a numeric timestamp in seconds.");
+      appendLog("warn", "Rejected non-numeric timestamp", { wordId: id, rawValue });
       return;
     }
     updateWordsSafely((prev) => prev.map((word) => (word.id === id ? { ...word, [key]: numeric } : word)));
+    appendLog("info", "Updated word timing", { wordId: id, key, value: numeric });
   };
 
   const handleInsertAfter = (id) => {
@@ -396,6 +437,7 @@ function App() {
       if (index === -1 || index === ordered.length - 1) {
         setWordError("Select a gap between two words to insert a new one.");
         flagRowError(id, "Select a gap between two words to insert a new one.");
+        appendLog("warn", "Insert attempted without valid gap", { wordId: id });
         return prev;
       }
       const before = ordered[index];
@@ -406,6 +448,7 @@ function App() {
         const message = "Not enough space to insert a word in this gap.";
         setWordError(message);
         flagRowError(before.id, message);
+        appendLog("warn", "Insert blocked due to insufficient gap", { before: before.id, after: after.id, gap });
         return prev;
       }
       const start = before.end + INSERT_PADDING;
@@ -416,6 +459,7 @@ function App() {
           : `local-${Date.now()}-${Math.random().toString(16).slice(2)}`;
       const newWord = { id: newId, text: "[new word]", start, end };
       const nextWords = [...ordered.slice(0, index + 1), newWord, ...ordered.slice(index + 1)];
+      appendLog("info", "Inserted placeholder word", { before: before.id, after: after.id, start, end });
       return nextWords;
     });
   };
@@ -427,6 +471,7 @@ function App() {
       return next;
     });
     updateWordsSafely((prev) => prev.filter((word) => word.id !== id));
+    appendLog("info", "Deleted word", { wordId: id });
   };
 
   const applyWordChanges = async () => {
@@ -437,6 +482,7 @@ function App() {
     if (editedWords.length === 0) {
       const message = "At least one word is required to render.";
       setWordError(message);
+      appendLog("warn", "Update blocked: no words present");
       return;
     }
     const validation = validateWordSequence(editedWords);
@@ -445,8 +491,13 @@ function App() {
       if (validation.errorWordId) {
         flagRowError(validation.errorWordId, validation.message);
       }
+      appendLog("warn", "Update blocked: validation failed", {
+        message: validation.message,
+        wordId: validation.errorWordId,
+      });
       return;
     }
+    appendLog("info", "Submitting edited words", { count: validation.ordered.length, endpoint: "/api/update" });
     setLoading(true);
     setAppState(APP_STATES.rendering);
     try {
@@ -464,8 +515,8 @@ function App() {
         }),
       });
       if (!response.ok) {
-        const detail = await response.json().catch(() => null);
-        const message = detail?.detail || "Update failed";
+        const message = await parseApiError(response);
+        appendLog("error", "Word update rejected", { message });
         throw new Error(message);
       }
       const payload = await response.json();
@@ -473,10 +524,11 @@ function App() {
       setWordError("");
       setRowErrors({});
       setStatus("Updated video + lyrics.");
+      appendLog("success", "Lyric edits applied", { outputId: payload?.output_id, words: editedWords.length });
       setAppState(APP_STATES.ready);
     } catch (err) {
-      log("update error", err);
-      setError(err.message);
+      appendLog("error", "Lyric update failed", { message: err?.message });
+      setError(err.message || "Update failed");
       setWordError(err.message);
       setAppState(APP_STATES.ready);
     } finally {
@@ -587,6 +639,8 @@ function App() {
                 videoRef={videoRef}
                 applyChanges={applyWordChanges}
                 loading={loading}
+                logs={clientLogs}
+                onClearLogs={() => setClientLogs([])}
               />
             ) : (
               <EmptyState
