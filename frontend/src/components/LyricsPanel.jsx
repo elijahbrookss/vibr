@@ -7,8 +7,10 @@ function LyricsPanel({
   onWordChange,
   onWordTimeChange,
   onInsertAfter,
+  onDeleteWord,
   activeWordId,
   wordError,
+  rowErrors,
   overlayStyle,
   videoRef,
   applyChanges,
@@ -35,61 +37,77 @@ function LyricsPanel({
           <span>Word</span>
           <span>Start (s)</span>
           <span>End (s)</span>
-          <span className="word-actions-col">Insert</span>
+          <span className="word-actions-col">Actions</span>
         </div>
         {!hasWords && <p className="lyric-tip">Generate a take to unlock the lyric grid.</p>}
         <div className="word-grid-body">
           {words.map((word, idx) => (
-            <div
-              key={word.id}
-              className={`word-row ${activeWordId === word.id ? "active" : ""}`}
-              onClick={() => seekTo(word.start)}
-            >
-              <input
-                className="word-input"
-                value={word.text}
-                onChange={(event) => onWordChange(word.id, event.target.value)}
-                aria-label={`Edit word ${word.text}`}
-              />
-              <input
-                type="number"
-                step="0.001"
-                min="0"
-                className="time-input"
-                value={Number.isFinite(word.start) ? word.start.toFixed(3) : "0.000"}
-                onClick={(event) => event.stopPropagation()}
-                onChange={(event) => onWordTimeChange(word.id, "start", event.target.value)}
-                aria-label={`Set start for ${word.text}`}
-              />
-              <input
-                type="number"
-                step="0.001"
-                min="0"
-                className="time-input"
-                value={Number.isFinite(word.end) ? word.end.toFixed(3) : "0.000"}
-                onClick={(event) => event.stopPropagation()}
-                onChange={(event) => onWordTimeChange(word.id, "end", event.target.value)}
-                aria-label={`Set end for ${word.text}`}
-              />
-              <div className="word-actions">
-                {idx < words.length - 1 ? (
+            <div className="word-row-wrapper" key={word.id}>
+              <div
+                className={`word-row ${activeWordId === word.id ? "active" : ""}`}
+                onClick={() => seekTo(word.start)}
+              >
+                <input
+                  className="word-input"
+                  value={word.text}
+                  onClick={(event) => event.stopPropagation()}
+                  onChange={(event) => onWordChange(word.id, event.target.value)}
+                  aria-label={`Edit word ${word.text}`}
+                />
+                <input
+                  type="number"
+                  step="0.001"
+                  min="0"
+                  inputMode="decimal"
+                  className="time-input"
+                  value={Number.isFinite(word.start) ? word.start.toFixed(3) : "0.000"}
+                  onClick={(event) => event.stopPropagation()}
+                  onChange={(event) => onWordTimeChange(word.id, "start", event.target.value)}
+                  aria-label={`Set start for ${word.text}`}
+                />
+                <input
+                  type="number"
+                  step="0.001"
+                  min="0"
+                  inputMode="decimal"
+                  className="time-input"
+                  value={Number.isFinite(word.end) ? word.end.toFixed(3) : "0.000"}
+                  onClick={(event) => event.stopPropagation()}
+                  onChange={(event) => onWordTimeChange(word.id, "end", event.target.value)}
+                  aria-label={`Set end for ${word.text}`}
+                />
+                <div className="word-actions">
+                  {idx < words.length - 1 ? (
+                    <button
+                      type="button"
+                      className="ghost"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onInsertAfter(word.id);
+                      }}
+                      aria-label="Insert a new word after this"
+                    >
+                      +
+                    </button>
+                  ) : (
+                    <span className="word-actions-placeholder" aria-hidden="true">
+                      ·
+                    </span>
+                  )}
                   <button
                     type="button"
-                    className="ghost"
+                    className="ghost delete"
                     onClick={(event) => {
                       event.stopPropagation();
-                      onInsertAfter(word.id);
+                      onDeleteWord(word.id);
                     }}
-                    aria-label="Insert a new word after this"
+                    aria-label={`Delete ${word.text}`}
                   >
-                    +
+                    ×
                   </button>
-                ) : (
-                  <span className="word-actions-placeholder" aria-hidden="true">
-                    ·
-                  </span>
-                )}
+                </div>
               </div>
+              {rowErrors?.[word.id] && <div className="row-error">{rowErrors[word.id]}</div>}
             </div>
           ))}
         </div>

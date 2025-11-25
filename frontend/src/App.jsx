@@ -47,16 +47,20 @@ const validateWordSequence = (words) => {
   for (let idx = 0; idx < ordered.length; idx += 1) {
     const word = ordered[idx];
     if (!Number.isFinite(word.start) || !Number.isFinite(word.end)) {
-      return { valid: false, message: "Start and end times must be numbers." };
+      return { valid: false, message: "Start and end times must be numbers.", errorWordId: word.id };
     }
     if (word.start < 0) {
-      return { valid: false, message: "Word timings cannot be negative." };
+      return { valid: false, message: "Word timings cannot be negative.", errorWordId: word.id };
     }
     if (word.end - word.start < MIN_WORD_DURATION) {
-      return { valid: false, message: "Each word needs at least 50ms of duration." };
+      return {
+        valid: false,
+        message: "Each word needs at least 50ms of duration.",
+        errorWordId: word.id,
+      };
     }
     if (idx > 0 && word.start < prevEnd) {
-      return { valid: false, message: "Words must be ordered without overlap." };
+      return { valid: false, message: "Words must be ordered without overlap.", errorWordId: word.id };
     }
     prevEnd = Math.max(prevEnd, word.end);
   }
@@ -119,6 +123,7 @@ function App() {
   const [appState, setAppState] = useState(APP_STATES.idle);
   const [renderMessageIndex, setRenderMessageIndex] = useState(0);
   const [wordError, setWordError] = useState("");
+  const [rowErrors, setRowErrors] = useState({});
   const [activeWordId, setActiveWordId] = useState("");
   const renderDurationRef = useRef([]);
   const renderTimerRef = useRef(null);
@@ -151,6 +156,7 @@ function App() {
       setVideoDuration(0);
       setVideoTrim({ start: 0, end: 0 });
       setWordError("");
+      setRowErrors({});
       setActiveWordId("");
       if (!file) {
         setAppState(APP_STATES.idle);
@@ -328,6 +334,21 @@ function App() {
       setLoading(false);
     }
   };
+  const flagRowError = useCallback((wordId, message) => {
+    if (!wordId) {
+      setWordError(message);
+      return;
+    }
+    setRowErrors((prev) => ({ ...prev, [wordId]: message }));
+    setTimeout(() => {
+      setRowErrors((prev) => {
+        const next = { ...prev };
+        delete next[wordId];
+        return next;
+      });
+    }, 2000);
+  }, []);
+
   const updateWordsSafely = useCallback(
     (updater) => {
       setEditedWords((prev) => {
@@ -335,13 +356,23 @@ function App() {
         const validation = validateWordSequence(next);
         if (!validation.valid) {
           setWordError(validation.message);
+          if (validation.errorWordId) {
+            flagRowError(validation.errorWordId, validation.message);
+          }
           return prev;
         }
         setWordError("");
+        if (validation.errorWordId) {
+          setRowErrors((prev) => {
+            const nextErrors = { ...prev };
+            delete nextErrors[validation.errorWordId];
+            return nextErrors;
+          });
+        }
         return validation.ordered;
       });
     },
-    [setEditedWords, setWordError]
+    [flagRowError]
   );
 
   const handleWordTextChange = (id, text) => {
@@ -352,6 +383,7 @@ function App() {
     const numeric = Number.parseFloat(rawValue);
     if (!Number.isFinite(numeric)) {
       setWordError("Enter a numeric timestamp in seconds.");
+      flagRowError(id, "Enter a numeric timestamp in seconds.");
       return;
     }
     updateWordsSafely((prev) => prev.map((word) => (word.id === id ? { ...word, [key]: numeric } : word)));
@@ -363,6 +395,7 @@ function App() {
       const index = ordered.findIndex((word) => word.id === id);
       if (index === -1 || index === ordered.length - 1) {
         setWordError("Select a gap between two words to insert a new one.");
+        flagRowError(id, "Select a gap between two words to insert a new one.");
         return prev;
       }
       const before = ordered[index];
@@ -370,7 +403,9 @@ function App() {
       const gap = after.start - before.end;
       const available = gap - INSERT_PADDING * 2;
       if (available <= MIN_WORD_DURATION) {
-        setWordError("Not enough space to insert a word in this gap.");
+        const message = "Not enough space to insert a word in this gap.";
+        setWordError(message);
+        flagRowError(before.id, message);
         return prev;
       }
       const start = before.end + INSERT_PADDING;
@@ -385,17 +420,35 @@ function App() {
     });
   };
 
+  const handleDeleteWord = (id) => {
+    setRowErrors((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    updateWordsSafely((prev) => prev.filter((word) => word.id !== id));
+  };
+
   const applyWordChanges = async () => {
     if (!outputId) {
       setError("Generate a video before editing.");
       return;
     }
+    if (editedWords.length === 0) {
+      const message = "At least one word is required to render.";
+      setWordError(message);
+      return;
+    }
     const validation = validateWordSequence(editedWords);
     if (!validation.valid) {
       setWordError(validation.message);
+      if (validation.errorWordId) {
+        flagRowError(validation.errorWordId, validation.message);
+      }
       return;
     }
     setLoading(true);
+    setAppState(APP_STATES.rendering);
     try {
       const response = await fetch("/api/update", {
         method: "POST",
@@ -418,11 +471,14 @@ function App() {
       const payload = await response.json();
       setResult(payload);
       setWordError("");
+      setRowErrors({});
       setStatus("Updated video + lyrics.");
+      setAppState(APP_STATES.ready);
     } catch (err) {
       log("update error", err);
       setError(err.message);
       setWordError(err.message);
+      setAppState(APP_STATES.ready);
     } finally {
       setLoading(false);
     }
@@ -523,8 +579,10 @@ function App() {
                 onWordChange={handleWordTextChange}
                 onWordTimeChange={handleWordTimingChange}
                 onInsertAfter={handleInsertAfter}
+                onDeleteWord={handleDeleteWord}
                 activeWordId={activeWordId}
                 wordError={wordError}
+                rowErrors={rowErrors}
                 overlayStyle={overlayStyleVars}
                 videoRef={videoRef}
                 applyChanges={applyWordChanges}
