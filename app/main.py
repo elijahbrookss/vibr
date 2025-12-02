@@ -420,6 +420,12 @@ def build_lyric_video(
         prefix_clips: list[TextClip] = []
         for idx, word in enumerate(chunk.words):
             prefix_text = " ".join(w.text for w in chunk.words[: idx + 1])
+            next_start = chunk.words[idx + 1].start if idx + 1 < len(chunk.words) else chunk.end
+            gap = max(next_start - word.start, 0.0)
+            if idx + 1 < len(chunk.words):
+                duration = gap if gap > 0 else MIN_WORD_DURATION
+            else:
+                duration = max(chunk.end - word.start, MIN_WORD_DURATION)
             try:
                 word_clip = TextClip(
                     text=prefix_text,
@@ -440,7 +446,7 @@ def build_lyric_video(
                 )
             word_clip = (
                 word_clip.with_start(word.start)
-                .with_duration(max(chunk.end - word.start, 0.2))
+                .with_duration(duration)
                 .with_position("center")
             )
             prefix_clips.append(word_clip)
