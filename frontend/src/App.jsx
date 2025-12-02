@@ -179,58 +179,6 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!result) {
-      setEditedWords([]);
-      setOutputId("");
-      setVideoDuration(0);
-      setVideoTrim({ start: 0, end: 0 });
-      setWordError("");
-      setRowErrors({});
-      setActiveWordId("");
-      setClientLogs([]);
-      if (!file) {
-        setAppState(APP_STATES.idle);
-      }
-      return;
-    }
-    const duration = result.metadata?.video_duration ?? 0;
-    setEditedWords(result.words ?? []);
-    setOutputId(result.output_id ?? "");
-    setVideoDuration(duration);
-    setVideoTrim({
-      start: result.metadata?.video_trim?.start ?? 0,
-      end: result.metadata?.video_trim?.end ?? duration,
-    });
-    const metaFontPath = result.metadata?.font?.path || null;
-    const normalizedFontUrl = metaFontPath
-      ? metaFontPath.startsWith("/static/")
-        ? metaFontPath
-        : `/static/${metaFontPath}`
-      : null;
-    if (metaFontPath) {
-      upsertFontOption({
-        label: `${result.metadata?.font?.family || "Custom font"} (uploaded)`,
-        value: metaFontPath,
-        family: result.metadata?.font?.family || "Custom font",
-        path: metaFontPath,
-        url: normalizedFontUrl,
-        custom: true,
-      });
-    }
-    setFontSettings({
-      size: result.metadata?.font?.size ?? 70,
-      family: result.metadata?.font?.family ?? "Inter",
-      color: result.metadata?.font?.color ?? "#ffffff",
-      weight: result.metadata?.font?.weight ?? 600,
-      path: metaFontPath,
-      url: normalizedFontUrl,
-      option: metaFontPath || result.metadata?.font?.family || "Inter",
-      isCustom: Boolean(metaFontPath),
-    });
-    setAppState(APP_STATES.ready);
-  }, [result, upsertFontOption]);
-
-  useEffect(() => {
     if (!isRendering) {
       setRenderMessageIndex(0);
       renderDurationRef.current = [];
@@ -386,6 +334,58 @@ function App() {
       return [...prev, option];
     });
   }, []);
+
+  useEffect(() => {
+    if (!result) {
+      setEditedWords([]);
+      setOutputId("");
+      setVideoDuration(0);
+      setVideoTrim({ start: 0, end: 0 });
+      setWordError("");
+      setRowErrors({});
+      setActiveWordId("");
+      setClientLogs([]);
+      if (!file) {
+        setAppState(APP_STATES.idle);
+      }
+      return;
+    }
+    const duration = result.metadata?.video_duration ?? 0;
+    setEditedWords(result.words ?? []);
+    setOutputId(result.output_id ?? "");
+    setVideoDuration(duration);
+    setVideoTrim({
+      start: result.metadata?.video_trim?.start ?? 0,
+      end: result.metadata?.video_trim?.end ?? duration,
+    });
+    const metaFontPath = result.metadata?.font?.path || null;
+    const normalizedFontUrl = metaFontPath
+      ? metaFontPath.startsWith("/static/")
+        ? metaFontPath
+        : `/static/${metaFontPath}`
+      : null;
+    if (metaFontPath) {
+      upsertFontOption({
+        label: `${result.metadata?.font?.family || "Custom font"} (uploaded)`,
+        value: metaFontPath,
+        family: result.metadata?.font?.family || "Custom font",
+        path: metaFontPath,
+        url: normalizedFontUrl,
+        custom: true,
+      });
+    }
+    setFontSettings({
+      size: result.metadata?.font?.size ?? 70,
+      family: result.metadata?.font?.family ?? "Inter",
+      color: result.metadata?.font?.color ?? "#ffffff",
+      weight: result.metadata?.font?.weight ?? 600,
+      path: metaFontPath,
+      url: normalizedFontUrl,
+      option: metaFontPath || result.metadata?.font?.family || "Inter",
+      isCustom: Boolean(metaFontPath),
+    });
+    setAppState(APP_STATES.ready);
+  }, [result, upsertFontOption, file]);
 
   const handleFontUpload = useCallback(
     async (fontFile) => {
