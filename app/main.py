@@ -294,19 +294,74 @@ async def save_upload_file(upload_file: UploadFile, destination: Path) -> None:
 
 def extract_words(result: dict) -> List[Word]:
     words: List[Word] = []
+    discarded: List[dict] = []
+
     for seg_idx, segment in enumerate(result.get("segments", [])):
-        for word_idx, word_info in enumerate(segment.get("words", [])):
+        segment_words = segment.get("words", [])
+        for word_idx, word_info in enumerate(segment_words):
             word_text = word_info.get("word", "").strip()
             if not word_text:
                 continue
+
+            raw_start = word_info.get("start")
+            raw_end = word_info.get("end")
+            try:
+                start_val = float(raw_start) if raw_start is not None else None
+                end_val = float(raw_end) if raw_end is not None else None
+            except (TypeError, ValueError):
+                start_val = None
+                end_val = None
+
+            if start_val is None:
+                discarded.append({"segment": seg_idx, "index": word_idx, "text": word_text, "reason": "missing_start"})
+                continue
+
+            # Attempt to repair missing or zero-length end values using the next word/segment end.
+            if end_val is None or end_val <= start_val:
+                next_start = None
+                if word_idx + 1 < len(segment_words):
+                    try:
+                        next_start = float(segment_words[word_idx + 1].get("start"))
+                    except (TypeError, ValueError, KeyError):
+                        next_start = None
+                segment_end = None
+                try:
+                    segment_end = float(segment.get("end"))
+                except (TypeError, ValueError):
+                    segment_end = None
+                candidate_end = None
+                if next_start is not None and next_start > start_val:
+                    candidate_end = max(next_start - 0.001, start_val + MIN_WORD_DURATION)
+                elif segment_end is not None and segment_end > start_val:
+                    candidate_end = max(segment_end, start_val + MIN_WORD_DURATION)
+
+                if candidate_end and candidate_end > start_val:
+                    end_val = candidate_end
+                else:
+                    discarded.append(
+                        {
+                            "segment": seg_idx,
+                            "index": word_idx,
+                            "text": word_text,
+                            "reason": "invalid_or_zero_length",
+                            "start": start_val,
+                            "end": end_val,
+                        }
+                    )
+                    continue
+
             words.append(
                 Word(
                     id=f"{seg_idx}-{word_idx}",
                     text=word_text,
-                    start=float(word_info.get("start", 0.0)),
-                    end=float(word_info.get("end", 0.0)),
+                    start=start_val,
+                    end=end_val,
                 )
             )
+
+    if discarded:
+        LOGGER.warning("discarded words with invalid timings", extra={"count": len(discarded), "words": discarded[:10]})
+
     return words
 
 
@@ -355,7 +410,7 @@ def validate_word_timings(words: List[Word], total_duration: Optional[float] = N
                 status_code=400,
                 detail=(
                     f"Word '{word.text}' must be at least {int(MIN_WORD_DURATION * 1000)}ms "
-                    f"long (got {duration_ms}ms)."
+                    f"long (got {duration_ms}ms; start={word.start:.3f}, end={word.end:.3f})."
                 ),
             )
         if word.end <= word.start:
