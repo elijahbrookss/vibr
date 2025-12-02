@@ -9,8 +9,6 @@ import "./App.css";
 
 const log = (...args) => console.debug("[LyricPortal]", ...args);
 const TRIM_LIMITS = { min: 3, max: 180 };
-const MAX_WORDS_PER_CHUNK = 4;
-const MAX_GAP_BETWEEN_WORDS = 0.3;
 const MIN_WORD_DURATION = 0.015;
 const INSERT_PADDING = 0.02;
 const OVERLAP_EPSILON = 0.001;
@@ -167,34 +165,6 @@ const validateWordSequence = (words) => {
   return { valid: true, ordered: adjusted, adjustments };
 };
 
-const chunkWords = (words) => {
-  const ordered = sortWordsByTime(words);
-  const chunks = [];
-  let current = [];
-  ordered.forEach((word) => {
-    if (current.length === 0) {
-      current.push(word);
-      return;
-    }
-    const gap = word.start - current[current.length - 1].end;
-    if (gap > MAX_GAP_BETWEEN_WORDS || current.length >= MAX_WORDS_PER_CHUNK) {
-      chunks.push(current);
-      current = [word];
-    } else {
-      current.push(word);
-    }
-  });
-  if (current.length) {
-    chunks.push(current);
-  }
-  return chunks.map((wordsInChunk) => ({
-    text: wordsInChunk.map((w) => w.text).join(" "),
-    start: wordsInChunk[0]?.start ?? 0,
-    end: wordsInChunk[wordsInChunk.length - 1]?.end ?? 0,
-    words: wordsInChunk,
-  }));
-};
-
 function App() {
   const [status, setStatus] = useState("");
   const [result, setResult] = useState(null);
@@ -228,7 +198,6 @@ function App() {
   const [wordError, setWordError] = useState("");
   const [rowErrors, setRowErrors] = useState({});
   const [activeWordId, setActiveWordId] = useState("");
-  const [playbackTime, setPlaybackTime] = useState(0);
   const [clientLogs, setClientLogs] = useState([]);
   const [consoleOpen, setConsoleOpen] = useState(false);
   const renderDurationRef = useRef([]);
@@ -237,8 +206,6 @@ function App() {
   const loadedFontsRef = useRef(new Set());
 
   const orderedWords = useMemo(() => sortWordsByTime(editedWords), [editedWords]);
-  const previewChunks = useMemo(() => chunkWords(orderedWords), [orderedWords]);
-  const visibleChunks = useMemo(() => previewChunks.slice(0, 6), [previewChunks]);
   const hasResult = Boolean(result);
   const isRendering = appState === APP_STATES.rendering;
   const isReady = appState === APP_STATES.ready;
@@ -336,13 +303,11 @@ function App() {
     const node = videoRef.current;
     if (!node) {
       setActiveWordId("");
-      setPlaybackTime(0);
       return undefined;
     }
     const handleTimeUpdate = () => {
       const currentTime = node.currentTime ?? 0;
       const active = orderedWords.find((word) => currentTime >= word.start && currentTime < word.end);
-      setPlaybackTime(currentTime);
       setActiveWordId(active?.id ?? "");
     };
     node.addEventListener("timeupdate", handleTimeUpdate);
@@ -839,8 +804,6 @@ function App() {
             {hasResult ? (
               <LyricsPanel
                 words={orderedWords}
-                visibleChunks={visibleChunks}
-                chunkCount={previewChunks.length}
                 onWordChange={handleWordTextChange}
                 onWordTimeChange={handleWordTimingChange}
                 onInsertAfter={handleInsertAfter}
@@ -851,7 +814,6 @@ function App() {
                 videoRef={videoRef}
                 applyChanges={applyWordChanges}
                 loading={loading}
-                playbackTime={playbackTime}
               />
             ) : (
               <EmptyState

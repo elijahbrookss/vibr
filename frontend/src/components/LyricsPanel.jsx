@@ -1,9 +1,5 @@
-import { formatTimestamp } from "../utils/time";
-
 function LyricsPanel({
   words,
-  visibleChunks,
-  chunkCount,
   onWordChange,
   onWordTimeChange,
   onInsertAfter,
@@ -14,7 +10,6 @@ function LyricsPanel({
   videoRef,
   applyChanges,
   loading,
-  playbackTime,
 }) {
   const seekTo = (time) => {
     if (videoRef?.current) {
@@ -109,43 +104,6 @@ function LyricsPanel({
               {rowErrors?.[word.id] && <div className="row-error">{rowErrors[word.id]}</div>}
             </div>
           ))}
-        </div>
-      </div>
-      <div className="chunk-preview">
-        <div className="chunk-preview-header">
-          <h4>Display chunks</h4>
-          {chunkCount > visibleChunks.length && (
-            <span className="lyric-note">Showing {visibleChunks.length} of {chunkCount}</span>
-          )}
-        </div>
-        <div className="chunk-list">
-          {visibleChunks.map((chunk, idx) => {
-            const isActive = chunk.words?.some((w) => w.id === activeWordId);
-            const chunkLive = playbackTime >= chunk.start && playbackTime <= chunk.end + 0.01;
-            return (
-              <div key={`${chunk.start}-${idx}`} className={`chunk-card ${isActive ? "active" : ""}`}>
-                <div className="chunk-times">
-                  <span>{formatTimestamp(chunk.start, { milliseconds: true })}</span>
-                  <span>{formatTimestamp(chunk.end, { milliseconds: true })}</span>
-                </div>
-                <div className={`bar-words ${chunkLive ? "typewriter" : ""}`}>
-                  {chunk.words?.map((word) => {
-                    const wordVisible = !chunkLive || playbackTime + 0.0001 >= word.start;
-                    return (
-                      <span
-                        key={word.id}
-                        className={`word-chip ${activeWordId === word.id ? "active" : ""} ${
-                          wordVisible ? "visible" : "pending"
-                        }`}
-                      >
-                        {word.text}
-                      </span>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })}
         </div>
       </div>
       <div className="update-actions">
