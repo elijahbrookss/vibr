@@ -279,6 +279,19 @@ class LyricChunk:
     words: List[Word]
 
 
+@dataclass
+class ValidationAdjustments:
+    shifted: List[Dict[str, Any]]
+    batched: List[Dict[str, Any]]
+    dropped: List[Dict[str, Any]]
+
+
+@dataclass
+class ValidationResult:
+    words: List[Word]
+    adjustments: ValidationAdjustments
+
+
 def get_whisper_model() -> whisper.Whisper:
     if MODEL is None:
         raise RuntimeError("Whisper model is not loaded.")
@@ -399,14 +412,21 @@ def build_chunks(words: List[Word]) -> List[LyricChunk]:
     return chunks
 
 
-def validate_word_timings(words: List[Word], total_duration: Optional[float] = None) -> List[Word]:
+def validate_word_timings(words: List[Word], total_duration: Optional[float] = None) -> ValidationResult:
     ordered = sorted(words, key=lambda w: (w.start, w.end))
-    previous_end = 0.0
-    for index, word in enumerate(ordered):
+    adjusted: List[Word] = []
+    adjustments = ValidationAdjustments(shifted=[], batched=[], dropped=[])
+
+    idx = 0
+    while idx < len(ordered):
+        word = ordered[idx]
         if word.start < 0 or word.end < 0:
             raise HTTPException(status_code=400, detail="Word timings cannot be negative.")
-        duration_ms = int(round((word.end - word.start) * 1000))
-        if word.end - word.start < MIN_WORD_DURATION:
+        if word.end <= word.start:
+            raise HTTPException(status_code=400, detail=f"Word '{word.text}' must end after it starts.")
+        duration = word.end - word.start
+        duration_ms = int(round(duration * 1000))
+        if duration < MIN_WORD_DURATION:
             raise HTTPException(
                 status_code=400,
                 detail=(
@@ -414,9 +434,97 @@ def validate_word_timings(words: List[Word], total_duration: Optional[float] = N
                     f"long (got {duration_ms}ms; start={word.start:.3f}, end={word.end:.3f})."
                 ),
             )
-        if word.end <= word.start:
-            raise HTTPException(status_code=400, detail=f"Word '{word.text}' must end after it starts.")
-        if index > 0 and word.start < previous_end - OVERLAP_EPSILON:
+
+        if not adjusted:
+            adjusted.append(word)
+            idx += 1
+            continue
+
+        previous = adjusted[-1]
+        previous_end = previous.end
+        if word.start >= previous_end - OVERLAP_EPSILON:
+            adjusted.append(word)
+            idx += 1
+            continue
+
+        # Attempt to shift the word forward to resolve the overlap while preserving duration.
+        candidate_start = previous_end + OVERLAP_EPSILON
+        candidate_end = candidate_start + duration
+        next_start = ordered[idx + 1].start if idx + 1 < len(ordered) else None
+        fits_after_shift = True
+        if next_start is not None and candidate_end > next_start - OVERLAP_EPSILON:
+            fits_after_shift = False
+        if total_duration is not None and candidate_end > total_duration + 0.001:
+            fits_after_shift = False
+
+        if fits_after_shift:
+            adjustments.shifted.append(
+                {
+                    "id": word.id,
+                    "text": word.text,
+                    "from": {"start": word.start, "end": word.end},
+                    "to": {"start": candidate_start, "end": candidate_end},
+                }
+            )
+            adjusted.append(Word(id=word.id, text=word.text, start=candidate_start, end=candidate_end))
+            idx += 1
+            continue
+
+        # Attempt to batch a small overlapping group (up to four words) into a single merged word.
+        group: List[Word] = [previous, word]
+        adjusted.pop()
+        group_end = max(previous.end, word.end)
+        group_start = min(previous.start, word.start)
+        next_idx = idx + 1
+        while next_idx < len(ordered) and len(group) < 4:
+            candidate = ordered[next_idx]
+            if candidate.start <= group_end + OVERLAP_EPSILON:
+                group.append(candidate)
+                group_end = max(group_end, candidate.end)
+                next_idx += 1
+            else:
+                break
+
+        if len(group) <= 4:
+            merged = Word(
+                id="+".join(w.id for w in group),
+                text=" ".join(w.text for w in group),
+                start=group_start,
+                end=group_end,
+            )
+            adjustments.batched.append(
+                {
+                    "ids": [w.id for w in group],
+                    "text": merged.text,
+                    "start": merged.start,
+                    "end": merged.end,
+                }
+            )
+            adjusted.append(merged)
+            idx = next_idx
+            continue
+
+        # Drop the offending word if shifting and batching fail.
+        adjustments.dropped.append(
+            {"id": word.id, "text": word.text, "start": word.start, "end": word.end, "reason": "overlap_unresolved"}
+        )
+        adjusted.append(previous)
+        idx += 1
+
+    # Final pass to ensure ordering and duration integrity after adjustments.
+    previous_end = 0.0
+    for word in adjusted:
+        if total_duration is not None and word.end > total_duration + 0.001:
+            raise HTTPException(status_code=400, detail="Word timing exceeds the available audio duration.")
+        if word.end - word.start < MIN_WORD_DURATION:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Word '{word.text}' must be at least {int(MIN_WORD_DURATION * 1000)}ms "
+                    f"long (got {int(round((word.end - word.start) * 1000))}ms; start={word.start:.3f}, end={word.end:.3f})."
+                ),
+            )
+        if word.start < previous_end - OVERLAP_EPSILON:
             overlap_ms = int(round((previous_end - word.start) * 1000))
             raise HTTPException(
                 status_code=400,
@@ -426,10 +534,25 @@ def validate_word_timings(words: List[Word], total_duration: Optional[float] = N
                     f"which is {overlap_ms}ms before the previous end {previous_end:.3f}s."
                 ),
             )
-        if total_duration is not None and word.end > total_duration + 0.001:
-            raise HTTPException(status_code=400, detail="Word timing exceeds the available audio duration.")
         previous_end = word.end
-    return ordered
+
+    if adjustments.dropped:
+        LOGGER.warning(
+            "dropped overlapping words after auto-resolution attempts",
+            extra={"count": len(adjustments.dropped), "words": adjustments.dropped},
+        )
+    if adjustments.shifted:
+        LOGGER.info(
+            "auto-shifted overlapping words",
+            extra={"count": len(adjustments.shifted), "words": adjustments.shifted[:10]},
+        )
+    if adjustments.batched:
+        LOGGER.info(
+            "batched overlapping words",
+            extra={"count": len(adjustments.batched), "words": adjustments.batched[:10]},
+        )
+
+    return ValidationResult(words=adjusted, adjustments=adjustments)
 
 
 def words_payload(words: List[Word]) -> List[Dict[str, Any]]:
@@ -713,7 +836,8 @@ async def process_audio(
         duration_ms = (time.time() - start_transcription) * 1000
         LOGGER.info("transcription complete", extra={"duration_ms": f"{duration_ms:.2f}", "segments": len(transcription.get("segments", []))})
 
-        words = validate_word_timings(extract_words(transcription))
+        validation = validate_word_timings(extract_words(transcription))
+        words = validation.words
         LOGGER.info("extracted words", extra={"count": len(words)})
         chunks = build_chunks(words)
         LOGGER.info("built chunks", extra={"chunks": len(chunks)})
@@ -774,7 +898,7 @@ async def process_audio(
         write_words_metadata(words_data, output_dir)
         write_chunks_metadata(chunks_data, output_dir)
 
-        return {
+        response = {
             "lyrics_url": f"/static/outputs/{output_id}/lyrics.txt",
             "video_url": f"/static/outputs/{output_id}/lyrics.mp4",
             "words": words_data,
@@ -782,6 +906,18 @@ async def process_audio(
             "metadata": metadata,
             "output_id": output_id,
         }
+        if (
+            validation.adjustments.shifted
+            or validation.adjustments.batched
+            or validation.adjustments.dropped
+        ):
+            response["timing_adjustments"] = {
+                "shifted": validation.adjustments.shifted,
+                "batched": validation.adjustments.batched,
+                "dropped": validation.adjustments.dropped,
+            }
+
+        return response
     except HTTPException:
         raise
     except Exception:
@@ -841,7 +977,8 @@ def update_output(payload: UpdatePayload):
         )
 
     original_duration = metadata.get("video_duration", max((word.end for word in base_words), default=0.0))
-    base_words = validate_word_timings(base_words, original_duration)
+    base_validation = validate_word_timings(base_words, original_duration)
+    base_words = base_validation.words
     trim_start = payload.video_trim_start if payload.video_trim_start is not None else metadata.get("video_trim", {}).get("start", 0.0)
     trim_end = payload.video_trim_end if payload.video_trim_end is not None else metadata.get("video_trim", {}).get("end", original_duration)
     trim_start = max(0.0, min(trim_start, original_duration))
@@ -860,7 +997,8 @@ def update_output(payload: UpdatePayload):
     if not filtered_words:
         raise HTTPException(status_code=400, detail="Trim range removed all lyric words.")
 
-    filtered_words = validate_word_timings(filtered_words, trim_end - trim_start)
+    filtered_validation = validate_word_timings(filtered_words, trim_end - trim_start)
+    filtered_words = filtered_validation.words
 
     chunks = build_chunks(filtered_words)
 
@@ -901,6 +1039,11 @@ def update_output(payload: UpdatePayload):
 
     chunks_data = chunks_payload(chunks)
     video_duration = max((chunk.end for chunk in chunks), default=0.5)
+    combined_adjustments = {
+        "shifted": base_validation.adjustments.shifted + filtered_validation.adjustments.shifted,
+        "batched": base_validation.adjustments.batched + filtered_validation.adjustments.batched,
+        "dropped": base_validation.adjustments.dropped + filtered_validation.adjustments.dropped,
+    }
     metadata.update(
         {
             "video_duration": float(video_duration),
@@ -919,7 +1062,7 @@ def update_output(payload: UpdatePayload):
     write_words_metadata(words_payload(base_words), output_dir)
     write_chunks_metadata(chunks_data, output_dir)
 
-    return {
+    response = {
         "lyrics_url": f"/static/outputs/{payload.output_id}/lyrics.txt",
         "video_url": f"/static/outputs/{payload.output_id}/lyrics.mp4",
         "words": words_payload(filtered_words),
@@ -927,6 +1070,10 @@ def update_output(payload: UpdatePayload):
         "metadata": metadata,
         "output_id": payload.output_id,
     }
+    if combined_adjustments["shifted"] or combined_adjustments["batched"] or combined_adjustments["dropped"]:
+        response["timing_adjustments"] = combined_adjustments
+
+    return response
 def resolve_font_path(font_path: Optional[str]) -> Optional[Path]:
     if not font_path:
         return None

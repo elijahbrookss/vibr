@@ -14,6 +14,12 @@ const MAX_GAP_BETWEEN_WORDS = 0.3;
 const MIN_WORD_DURATION = 0.015;
 const INSERT_PADDING = 0.02;
 const OVERLAP_EPSILON = 0.001;
+const hasAdjustments = (adjustments = {}) =>
+  Boolean(
+    (adjustments.shifted && adjustments.shifted.length) ||
+      (adjustments.batched && adjustments.batched.length) ||
+      (adjustments.dropped && adjustments.dropped.length)
+  );
 const DEFAULT_FONT_OPTIONS = [
   { label: "Inter", value: "Inter", family: "Inter" },
   { label: "Roboto", value: "Roboto", family: "Roboto" },
@@ -51,8 +57,11 @@ const sortWordsByTime = (words) =>
 
 const validateWordSequence = (words) => {
   const ordered = sortWordsByTime(words);
-  let prevEnd = 0;
-  for (let idx = 0; idx < ordered.length; idx += 1) {
+  const adjusted = [];
+  const adjustments = { shifted: [], batched: [], dropped: [] };
+
+  let idx = 0;
+  while (idx < ordered.length) {
     const word = ordered[idx];
     if (!Number.isFinite(word.start) || !Number.isFinite(word.end)) {
       return { valid: false, message: "Start and end times must be numbers.", errorWordId: word.id };
@@ -61,27 +70,101 @@ const validateWordSequence = (words) => {
       return { valid: false, message: "Word timings cannot be negative.", errorWordId: word.id };
     }
     const durationMs = Math.round((word.end - word.start) * 1000);
-    if (word.end - word.start < MIN_WORD_DURATION) {
+    const duration = word.end - word.start;
+    if (duration < MIN_WORD_DURATION) {
       return {
         valid: false,
         message: `Each word needs at least 15ms of duration (got ${durationMs}ms).`,
         errorWordId: word.id,
       };
     }
-    if (idx > 0 && word.start < prevEnd - OVERLAP_EPSILON) {
-      const overlapMs = Math.round((prevEnd - word.start) * 1000);
-      const offendingLabel = word.text || word.id || "word";
+
+    if (adjusted.length === 0) {
+      adjusted.push(word);
+      idx += 1;
+      continue;
+    }
+
+    const previous = adjusted[adjusted.length - 1];
+    if (word.start >= previous.end - OVERLAP_EPSILON) {
+      adjusted.push(word);
+      idx += 1;
+      continue;
+    }
+
+    const candidateStart = previous.end + OVERLAP_EPSILON;
+    const candidateEnd = candidateStart + duration;
+    const nextStart = idx + 1 < ordered.length ? ordered[idx + 1].start : null;
+    const fitsAfterShift = !nextStart || candidateEnd <= nextStart - OVERLAP_EPSILON;
+
+    if (fitsAfterShift) {
+      adjustments.shifted.push({
+        id: word.id,
+        text: word.text,
+        from: { start: word.start, end: word.end },
+        to: { start: candidateStart, end: candidateEnd },
+      });
+      adjusted.push({ ...word, start: candidateStart, end: candidateEnd });
+      idx += 1;
+      continue;
+    }
+
+    const group = [previous, word];
+    adjusted.pop();
+    let groupStart = Math.min(previous.start, word.start);
+    let groupEnd = Math.max(previous.end, word.end);
+    let nextIdx = idx + 1;
+    while (nextIdx < ordered.length && group.length < 4) {
+      const candidate = ordered[nextIdx];
+      if (candidate.start <= groupEnd + OVERLAP_EPSILON) {
+        group.push(candidate);
+        groupEnd = Math.max(groupEnd, candidate.end);
+        nextIdx += 1;
+      } else {
+        break;
+      }
+    }
+
+    if (group.length <= 4) {
+      const merged = {
+        id: `batch-${group.map((w) => w.id).join("+")}`,
+        text: group.map((w) => w.text).join(" "),
+        start: groupStart,
+        end: groupEnd,
+      };
+      adjustments.batched.push({
+        ids: group.map((w) => w.id),
+        text: merged.text,
+        start: merged.start,
+        end: merged.end,
+      });
+      adjusted.push(merged);
+      idx = nextIdx;
+      continue;
+    }
+
+    adjustments.dropped.push({ id: word.id, text: word.text, start: word.start, end: word.end, reason: "overlap_unresolved" });
+    adjusted.push(previous);
+    idx += 1;
+  }
+
+  let prevEnd = 0;
+  for (let i = 0; i < adjusted.length; i += 1) {
+    const w = adjusted[i];
+    if (w.start < prevEnd - OVERLAP_EPSILON) {
+      const overlapMs = Math.round((prevEnd - w.start) * 1000);
       return {
         valid: false,
-        message: `${offendingLabel} overlaps the previous word by ${overlapMs}ms (start ${word.start.toFixed(
+        message: `${w.text || w.id} overlaps the previous word by ${overlapMs}ms (start ${w.start.toFixed(3)}s, end ${w.end.toFixed(
           3,
-        )}s, end ${word.end.toFixed(3)}s, previous end ${prevEnd.toFixed(3)}s).`,
-        errorWordId: word.id,
+        )}s, previous end ${prevEnd.toFixed(3)}s).`,
+        errorWordId: w.id,
       };
     }
-    prevEnd = Math.max(prevEnd, word.end);
+    prevEnd = Math.max(prevEnd, w.end);
   }
-  return { valid: true, ordered };
+
+  return { valid: true, ordered: adjusted, adjustments };
 };
 
 const chunkWords = (words) => {
@@ -519,6 +602,9 @@ function App() {
           return prev;
         }
         setWordError("");
+        if (hasAdjustments(validation.adjustments)) {
+          appendLog("warn", "Auto-resolved overlapping words", { adjustments: validation.adjustments });
+        }
         if (validation.errorWordId) {
           setRowErrors((prev) => {
             const nextErrors = { ...prev };
@@ -615,6 +701,9 @@ function App() {
         wordId: validation.errorWordId,
       });
       return;
+    }
+    if (hasAdjustments(validation.adjustments)) {
+      appendLog("warn", "Submitting with auto-resolved overlaps", { adjustments: validation.adjustments });
     }
     appendLog("info", "Submitting edited words", { count: validation.ordered.length, endpoint: "/api/update" });
     setLoading(true);
