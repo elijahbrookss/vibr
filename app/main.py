@@ -41,6 +41,7 @@ SAFE_AREA_WIDTH_RATIO = 0.88
 SAFE_AREA_HEIGHT_RATIO = 0.28
 MIN_FONT_SIZE = 36
 MIN_WORD_DURATION = 0.015
+OVERLAP_EPSILON = 0.001
 
 MODEL: Optional[whisper.Whisper] = None
 LOGGER = logging.getLogger("lyric_backend")
@@ -415,8 +416,16 @@ def validate_word_timings(words: List[Word], total_duration: Optional[float] = N
             )
         if word.end <= word.start:
             raise HTTPException(status_code=400, detail=f"Word '{word.text}' must end after it starts.")
-        if index > 0 and word.start < previous_end:
-            raise HTTPException(status_code=400, detail="Words must be ordered without overlapping.")
+        if index > 0 and word.start < previous_end - OVERLAP_EPSILON:
+            overlap_ms = int(round((previous_end - word.start) * 1000))
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Words must be ordered without overlapping. "
+                    f"Word '{word.text}' (id={word.id}) starts at {word.start:.3f}s and ends at {word.end:.3f}s, "
+                    f"which is {overlap_ms}ms before the previous end {previous_end:.3f}s."
+                ),
+            )
         if total_duration is not None and word.end > total_duration + 0.001:
             raise HTTPException(status_code=400, detail="Word timing exceeds the available audio duration.")
         previous_end = word.end

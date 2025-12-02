@@ -13,6 +13,7 @@ const MAX_WORDS_PER_CHUNK = 4;
 const MAX_GAP_BETWEEN_WORDS = 0.3;
 const MIN_WORD_DURATION = 0.015;
 const INSERT_PADDING = 0.02;
+const OVERLAP_EPSILON = 0.001;
 const DEFAULT_FONT_OPTIONS = [
   { label: "Inter", value: "Inter", family: "Inter" },
   { label: "Roboto", value: "Roboto", family: "Roboto" },
@@ -67,8 +68,16 @@ const validateWordSequence = (words) => {
         errorWordId: word.id,
       };
     }
-    if (idx > 0 && word.start < prevEnd) {
-      return { valid: false, message: "Words must be ordered without overlap.", errorWordId: word.id };
+    if (idx > 0 && word.start < prevEnd - OVERLAP_EPSILON) {
+      const overlapMs = Math.round((prevEnd - word.start) * 1000);
+      const offendingLabel = word.text || word.id || "word";
+      return {
+        valid: false,
+        message: `${offendingLabel} overlaps the previous word by ${overlapMs}ms (start ${word.start.toFixed(
+          3,
+        )}s, end ${word.end.toFixed(3)}s, previous end ${prevEnd.toFixed(3)}s).`,
+        errorWordId: word.id,
+      };
     }
     prevEnd = Math.max(prevEnd, word.end);
   }
