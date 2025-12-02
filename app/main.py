@@ -39,7 +39,7 @@ CHUNKS_METADATA_NAME = "chunks.json"
 SAFE_AREA_WIDTH_RATIO = 0.88
 SAFE_AREA_HEIGHT_RATIO = 0.28
 MIN_FONT_SIZE = 36
-MIN_WORD_DURATION = 0.03
+MIN_WORD_DURATION = 0.015
 
 MODEL: Optional[whisper.Whisper] = None
 LOGGER = logging.getLogger("lyric_backend")
@@ -311,10 +311,14 @@ def validate_word_timings(words: List[Word], total_duration: Optional[float] = N
     for index, word in enumerate(ordered):
         if word.start < 0 or word.end < 0:
             raise HTTPException(status_code=400, detail="Word timings cannot be negative.")
+        duration_ms = int(round((word.end - word.start) * 1000))
         if word.end - word.start < MIN_WORD_DURATION:
             raise HTTPException(
                 status_code=400,
-                detail=f"Word '{word.text}' must be at least {int(MIN_WORD_DURATION * 1000)}ms long.",
+                detail=(
+                    f"Word '{word.text}' must be at least {int(MIN_WORD_DURATION * 1000)}ms "
+                    f"long (got {duration_ms}ms)."
+                ),
             )
         if word.end <= word.start:
             raise HTTPException(status_code=400, detail=f"Word '{word.text}' must end after it starts.")
