@@ -111,10 +111,7 @@ function App() {
     size: 70,
     family: "Inter",
     color: "#ffffff",
-  });
-  const [overlaySettings, setOverlaySettings] = useState({
     weight: 600,
-    animation: "fade",
   });
   const [editedWords, setEditedWords] = useState([]);
   const [outputId, setOutputId] = useState("");
@@ -135,16 +132,6 @@ function App() {
   const orderedWords = useMemo(() => sortWordsByTime(editedWords), [editedWords]);
   const previewChunks = useMemo(() => chunkWords(orderedWords), [orderedWords]);
   const visibleChunks = useMemo(() => previewChunks.slice(0, 6), [previewChunks]);
-  const overlayStyleVars = useMemo(
-    () => ({
-      "--overlay-font-family": fontSettings.family,
-      "--overlay-font-size": `${fontSettings.size}px`,
-      "--overlay-font-color": fontSettings.color,
-      "--overlay-font-weight": overlaySettings.weight,
-      "--overlay-animation": overlaySettings.animation,
-    }),
-    [fontSettings, overlaySettings]
-  );
   const hasResult = Boolean(result);
   const isRendering = appState === APP_STATES.rendering;
   const isReady = appState === APP_STATES.ready;
@@ -203,6 +190,7 @@ function App() {
       size: result.metadata?.font?.size ?? 70,
       family: result.metadata?.font?.family ?? "Inter",
       color: result.metadata?.font?.color ?? "#ffffff",
+      weight: result.metadata?.font?.weight ?? 600,
     });
     setAppState(APP_STATES.ready);
   }, [result]);
@@ -338,6 +326,7 @@ function App() {
     formData.append("font_family", fontSettings.family);
     formData.append("font_size", fontSettings.size);
     formData.append("font_color", fontSettings.color);
+    formData.append("font_weight", fontSettings.weight);
     if (trimSelection.active) {
       formData.append("trim_start", trimSelection.start.toString());
       formData.append("trim_end", trimSelection.end.toString());
@@ -514,6 +503,7 @@ function App() {
           font_family: fontSettings.family,
           font_size: fontSettings.size,
           font_color: fontSettings.color,
+          font_weight: fontSettings.weight,
           video_trim_start: videoTrim.start,
           video_trim_end: videoTrim.end,
         }),
@@ -642,7 +632,6 @@ function App() {
                 activeWordId={activeWordId}
                 wordError={wordError}
                 rowErrors={rowErrors}
-                overlayStyle={overlayStyleVars}
                 videoRef={videoRef}
                 applyChanges={applyWordChanges}
                 loading={loading}
@@ -663,42 +652,14 @@ function App() {
       {showTypeface && (
         <section className="page-card full-width style-panel">
           <div className="section-heading minimal">
-            <h3>Text, style & animation</h3>
-            <p>Fine-tune the overlay. Changes preview instantly; apply to re-render.</p>
+            <h3>Text & style for render</h3>
+            <p>Preview fonts instantly below; changes apply to the next video render.</p>
           </div>
-          <div className="style-grid">
-            <FontEditor
-              fontSettings={fontSettings}
-              onChange={(partial) => setFontSettings((prev) => ({ ...prev, ...partial }))}
-            />
-            <div className="style-stack">
-              <label className="font-control">
-                <span>Font weight</span>
-                <select
-                  value={overlaySettings.weight}
-                  onChange={(event) => setOverlaySettings((prev) => ({ ...prev, weight: Number(event.target.value) }))}
-                >
-                  {[400, 500, 600, 700, 800].map((weight) => (
-                    <option key={weight} value={weight}>
-                      {weight}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="font-control">
-                <span>Word animation</span>
-                <select
-                  value={overlaySettings.animation}
-                  onChange={(event) => setOverlaySettings((prev) => ({ ...prev, animation: event.target.value }))}
-                >
-                  <option value="fade">Fade up</option>
-                  <option value="slide">Slide in</option>
-                  <option value="pop">Pop</option>
-                </select>
-              </label>
-            </div>
-          </div>
-          <p className="helper-text">Applies to the next render.</p>
+          <FontEditor
+            fontSettings={fontSettings}
+            onChange={(partial) => setFontSettings((prev) => ({ ...prev, ...partial }))}
+          />
+          <p className="helper-text">Font changes won’t affect the on-page overlay—only the rendered video.</p>
           <button className="primary full" type="button" onClick={handleSubmit} disabled={loading || isRendering}>
             {loading && isRendering ? "Rendering your reel..." : "Generate video"}
           </button>

@@ -559,6 +559,12 @@
   gap: 0.75rem;
 }
 
+.font-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.75rem;
+}
+
 .font-control {
   display: flex;
   flex-direction: column;
@@ -584,6 +590,36 @@
 
 .font-control input[type="range"] {
   accent-color: var(--accent);
+}
+
+.font-preview {
+  background: rgba(7, 6, 19, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  padding: 1rem 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.font-preview-label {
+  font-size: 0.85rem;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.font-preview-card {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+  padding: 0.9rem 1rem;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.font-preview-hint {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--muted);
 }
 
 .helper-text {
@@ -778,10 +814,10 @@
   display: flex;
   flex-wrap: wrap;
   gap: 0.4rem;
-  font-family: var(--overlay-font-family, inherit);
-  font-size: var(--overlay-font-size, 1rem);
-  font-weight: var(--overlay-font-weight, 600);
-  color: var(--overlay-font-color, var(--text));
+  font-family: inherit;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
 }
 
 .word-chip {
@@ -789,37 +825,9 @@
   border: 1px solid rgba(255, 255, 255, 0.2);
   padding: 0.25rem 0.8rem;
   font-size: 0.9rem;
-  color: var(--overlay-font-color, var(--text));
+  color: var(--text);
   background: rgba(255, 255, 255, 0.08);
   opacity: 0.95;
-}
-
-.bar-words.animated.anim-fade .word-chip {
-  animation: fadeUp 0.35s ease both;
-}
-
-.bar-words.animated.anim-slide .word-chip {
-  animation: slideUp 0.45s ease both;
-}
-
-.bar-words.animated.anim-pop .word-chip {
-  animation: popIn 0.35s ease both;
-}
-
-.bar-words.animated .word-chip:nth-child(1) {
-  animation-delay: 0ms;
-}
-
-.bar-words.animated .word-chip:nth-child(2) {
-  animation-delay: 60ms;
-}
-
-.bar-words.animated .word-chip:nth-child(3) {
-  animation-delay: 120ms;
-}
-
-.bar-words.animated .word-chip:nth-child(4) {
-  animation-delay: 180ms;
 }
 
 .bar-words.typewriter .word-chip {

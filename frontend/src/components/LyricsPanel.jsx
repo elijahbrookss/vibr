@@ -11,7 +11,6 @@ function LyricsPanel({
   activeWordId,
   wordError,
   rowErrors,
-  overlayStyle,
   videoRef,
   applyChanges,
   loading,
@@ -24,7 +23,7 @@ function LyricsPanel({
   };
   const hasWords = words.length > 0;
   return (
-    <div className="lyrics-panel" style={overlayStyle}>
+    <div className="lyrics-panel">
       <div className="panel-header">
         <div>
           <h3>Rendered lyrics</h3>
@@ -129,11 +128,7 @@ function LyricsPanel({
                   <span>{formatTimestamp(chunk.start, { milliseconds: true })}</span>
                   <span>{formatTimestamp(chunk.end, { milliseconds: true })}</span>
                 </div>
-                <div
-                  className={`bar-words animated anim-${overlayStyle?.["--overlay-animation"]} ${
-                    chunkLive ? "typewriter" : ""
-                  }`}
-                >
+                <div className={`bar-words ${chunkLive ? "typewriter" : ""}`}>
                   {chunk.words?.map((word) => {
                     const wordVisible = !chunkLive || playbackTime + 0.0001 >= word.start;
                     return (

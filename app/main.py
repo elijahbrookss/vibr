@@ -30,6 +30,7 @@ FFMPEG_BINARY = shutil.which("ffmpeg") or "ffmpeg"
 DEFAULT_FONT_FAMILY = "DejaVu-Sans"
 DEFAULT_FONT_SIZE = 70
 DEFAULT_FONT_COLOR = "white"
+DEFAULT_FONT_WEIGHT = 600
 FALLBACK_FONT_FAMILY = "DejaVu-Sans"
 MAX_WORDS_PER_CHUNK = 4
 MAX_GAP_BETWEEN_WORDS = 0.3
@@ -357,33 +358,54 @@ def build_lyrics_file(chunks: List[LyricChunk], destination: Path) -> None:
 
 
 def _build_safe_text_clip(
-    chunk: LyricChunk, font_family: str, font_size: int, font_color: str
+    chunk: LyricChunk, font_family: str, font_size: int, font_color: str, font_weight: int
 ) -> tuple[TextClip, str, int, tuple[int, int]]:
     safe_width = int(VIDEO_SIZE[0] * SAFE_AREA_WIDTH_RATIO)
     safe_height = int(VIDEO_SIZE[1] * SAFE_AREA_HEIGHT_RATIO)
+    font_candidates: list[Optional[str]] = []
+    if font_family:
+        if font_weight:
+            font_candidates.extend(
+                [
+                    f"{font_family}-{font_weight}",
+                    f"{font_family} {font_weight}",
+                    f"{font_family}:{font_weight}",
+                ]
+            )
+        font_candidates.append(font_family)
+    font_candidates.append(None)
     chosen_font = font_family
     current_size = font_size
     picked_size = current_size
     last_clip: Optional[TextClip] = None
+    last_font_used: Optional[str] = chosen_font
     while current_size >= MIN_FONT_SIZE:
-        try:
-            clip = TextClip(
-                text=chunk.text,
-                font_size=current_size,
-                font=chosen_font,
-                color=font_color,
-                size=(safe_width, safe_height),
-                method="caption",
-            )
-        except ValueError:
-            LOGGER.warning("font unavailable, falling back to default", extra={"font": chosen_font})
-            chosen_font = None
+        clip: Optional[TextClip] = None
+        selected_font: Optional[str] = chosen_font
+        for candidate in font_candidates:
+            try:
+                clip = TextClip(
+                    text=chunk.text,
+                    font_size=current_size,
+                    font=candidate,
+                    color=font_color,
+                    size=(safe_width, safe_height),
+                    method="caption",
+                )
+                selected_font = candidate
+                break
+            except ValueError:
+                LOGGER.warning("font unavailable, falling back to default", extra={"font": candidate or "default"})
+                continue
+        if clip is None:
             current_size = current_size - 2
+            chosen_font = None
             continue
         last_clip = clip
         picked_size = current_size
+        last_font_used = selected_font
         if clip.w <= safe_width and clip.h <= safe_height:
-            return clip, chosen_font or FALLBACK_FONT_FAMILY, picked_size, (safe_width, safe_height)
+            return clip, selected_font or FALLBACK_FONT_FAMILY, picked_size, (safe_width, safe_height)
         current_size -= 2
     if last_clip is None:
         last_clip = TextClip(
@@ -394,7 +416,7 @@ def _build_safe_text_clip(
             method="caption",
         )
         picked_size = MIN_FONT_SIZE
-    return last_clip, chosen_font or FALLBACK_FONT_FAMILY, picked_size, (safe_width, safe_height)
+    return last_clip, last_font_used or FALLBACK_FONT_FAMILY, picked_size, (safe_width, safe_height)
 
 
 def build_lyric_video(
@@ -404,6 +426,7 @@ def build_lyric_video(
     font_family: str = DEFAULT_FONT_FAMILY,
     font_size: int = DEFAULT_FONT_SIZE,
     font_color: str = DEFAULT_FONT_COLOR,
+    font_weight: int = DEFAULT_FONT_WEIGHT,
 ) -> str:
     LOGGER.info("building lyric video", extra={"chunks": len(chunks), "destination": str(destination)})
     video_start = time.time()
@@ -415,7 +438,7 @@ def build_lyric_video(
         if not chunk.words:
             continue
         text_clip, used_font, resolved_size, safe_dimensions = _build_safe_text_clip(
-            chunk, font_used, font_size, font_color
+            chunk, font_used, font_size, font_color, font_weight
         )
         prefix_clips: list[TextClip] = []
         for idx, word in enumerate(chunk.words):
@@ -494,6 +517,7 @@ async def process_audio(
     font_family: str = Form(DEFAULT_FONT_FAMILY),
     font_size: Optional[float] = Form(None),
     font_color: str = Form(DEFAULT_FONT_COLOR),
+    font_weight: Optional[int] = Form(DEFAULT_FONT_WEIGHT),
 ):
     LOGGER.info(
         "processing audio upload",
@@ -580,6 +604,7 @@ async def process_audio(
         LOGGER.info("lyrics file written", extra={"path": str(lyrics_path)})
         total_duration = max((chunk.end for chunk in chunks), default=0.5)
         effective_font_size = int(font_size) if font_size and font_size > 0 else DEFAULT_FONT_SIZE
+        effective_font_weight = int(font_weight) if font_weight and font_weight > 0 else DEFAULT_FONT_WEIGHT
         used_font = build_lyric_video(
             chunks,
             video_path,
@@ -587,6 +612,7 @@ async def process_audio(
             font_family=font_family or DEFAULT_FONT_FAMILY,
             font_size=effective_font_size,
             font_color=font_color or DEFAULT_FONT_COLOR,
+            font_weight=effective_font_weight,
         )
         LOGGER.info("video file written", extra={"path": str(video_path)})
         audio_store_path = output_dir / "audio.wav"
@@ -600,6 +626,7 @@ async def process_audio(
                 "family": used_font,
                 "size": effective_font_size,
                 "color": font_color or DEFAULT_FONT_COLOR,
+                "weight": effective_font_weight,
             },
         }
         write_output_metadata(metadata, output_dir)
@@ -639,6 +666,7 @@ class UpdatePayload(BaseModel):
     font_family: Optional[str] = None
     font_size: Optional[float] = None
     font_color: Optional[str] = None
+    font_weight: Optional[int] = None
 
 
 @app.post("/api/update")
@@ -705,6 +733,9 @@ def update_output(payload: UpdatePayload):
         if payload.font_size and payload.font_size > 0
         else int(metadata.get("font", {}).get("size", DEFAULT_FONT_SIZE)),
         "color": payload.font_color or metadata.get("font", {}).get("color", DEFAULT_FONT_COLOR),
+        "weight": int(payload.font_weight)
+        if payload.font_weight and payload.font_weight > 0
+        else int(metadata.get("font", {}).get("weight", DEFAULT_FONT_WEIGHT)),
     }
 
     temp_audio = trim_audio_segment(audio_path, trim_start, trim_end)
@@ -718,6 +749,7 @@ def update_output(payload: UpdatePayload):
         font_family=font_settings["family"],
         font_size=font_settings["size"],
         font_color=font_settings["color"],
+        font_weight=font_settings["weight"],
     )
     if temp_audio.exists():
         temp_audio.unlink()
@@ -732,6 +764,7 @@ def update_output(payload: UpdatePayload):
                 "family": used_font,
                 "size": font_settings["size"],
                 "color": font_settings["color"],
+                "weight": font_settings["weight"],
             },
         }
     )
