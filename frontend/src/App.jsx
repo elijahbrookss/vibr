@@ -13,6 +13,13 @@ const MAX_WORDS_PER_CHUNK = 4;
 const MAX_GAP_BETWEEN_WORDS = 0.3;
 const MIN_WORD_DURATION = 0.015;
 const INSERT_PADDING = 0.02;
+const DEFAULT_FONT_OPTIONS = [
+  { label: "Inter", value: "Inter", family: "Inter" },
+  { label: "Roboto", value: "Roboto", family: "Roboto" },
+  { label: "Montserrat", value: "Montserrat", family: "Montserrat" },
+  { label: "Space Grotesk", value: "Space Grotesk", family: "Space Grotesk" },
+  { label: "Avenir", value: "Avenir", family: "Avenir" },
+];
 const APP_STATES = {
   idle: "idle",
   uploaded: "uploaded",
@@ -113,7 +120,13 @@ function App() {
     family: "Inter",
     color: "#ffffff",
     weight: 600,
+    path: null,
+    url: null,
+    option: "Inter",
+    isCustom: false,
   });
+  const [fontOptions, setFontOptions] = useState(DEFAULT_FONT_OPTIONS);
+  const [fontUploading, setFontUploading] = useState(false);
   const [editedWords, setEditedWords] = useState([]);
   const [outputId, setOutputId] = useState("");
   const [videoDuration, setVideoDuration] = useState(0);
@@ -129,6 +142,7 @@ function App() {
   const renderDurationRef = useRef([]);
   const renderTimerRef = useRef(null);
   const videoRef = useRef(null);
+  const loadedFontsRef = useRef(new Set());
 
   const orderedWords = useMemo(() => sortWordsByTime(editedWords), [editedWords]);
   const previewChunks = useMemo(() => chunkWords(orderedWords), [orderedWords]);
@@ -187,14 +201,34 @@ function App() {
       start: result.metadata?.video_trim?.start ?? 0,
       end: result.metadata?.video_trim?.end ?? duration,
     });
+    const metaFontPath = result.metadata?.font?.path || null;
+    const normalizedFontUrl = metaFontPath
+      ? metaFontPath.startsWith("/static/")
+        ? metaFontPath
+        : `/static/${metaFontPath}`
+      : null;
+    if (metaFontPath) {
+      upsertFontOption({
+        label: `${result.metadata?.font?.family || "Custom font"} (uploaded)`,
+        value: metaFontPath,
+        family: result.metadata?.font?.family || "Custom font",
+        path: metaFontPath,
+        url: normalizedFontUrl,
+        custom: true,
+      });
+    }
     setFontSettings({
       size: result.metadata?.font?.size ?? 70,
       family: result.metadata?.font?.family ?? "Inter",
       color: result.metadata?.font?.color ?? "#ffffff",
       weight: result.metadata?.font?.weight ?? 600,
+      path: metaFontPath,
+      url: normalizedFontUrl,
+      option: metaFontPath || result.metadata?.font?.family || "Inter",
+      isCustom: Boolean(metaFontPath),
     });
     setAppState(APP_STATES.ready);
-  }, [result]);
+  }, [result, upsertFontOption]);
 
   useEffect(() => {
     if (!isRendering) {
@@ -233,6 +267,30 @@ function App() {
       }
     };
   }, [isRendering]);
+
+  useEffect(() => {
+    if (!fontSettings.url || !fontSettings.family) return undefined;
+    const key = `${fontSettings.family}:${fontSettings.url}`;
+    if (loadedFontsRef.current.has(key)) return undefined;
+    let cancelled = false;
+    const face = new FontFace(fontSettings.family, `url(${fontSettings.url})`);
+    face
+      .load()
+      .then((loaded) => {
+        if (cancelled) return;
+        document.fonts.add(loaded);
+        loadedFontsRef.current.add(key);
+        appendLog("info", "Loaded custom font for preview", { family: fontSettings.family });
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          appendLog("warn", "Failed to load custom font", { message: err?.message });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [fontSettings.family, fontSettings.url, appendLog]);
 
   useEffect(() => {
     const node = videoRef.current;
@@ -317,6 +375,61 @@ function App() {
     }
   };
 
+  const upsertFontOption = useCallback((option) => {
+    setFontOptions((prev) => {
+      const existingIndex = prev.findIndex((entry) => entry.value === option.value);
+      if (existingIndex >= 0) {
+        const next = [...prev];
+        next[existingIndex] = { ...next[existingIndex], ...option };
+        return next;
+      }
+      return [...prev, option];
+    });
+  }, []);
+
+  const handleFontUpload = useCallback(
+    async (fontFile) => {
+      if (!fontFile) return;
+      setFontUploading(true);
+      const formData = new FormData();
+      formData.append("file", fontFile);
+      appendLog("info", "Uploading custom font", { name: fontFile.name, size: fontFile.size });
+      try {
+        const response = await fetch("/api/fonts", { method: "POST", body: formData });
+        if (!response.ok) {
+          const message = await parseApiError(response);
+          throw new Error(message);
+        }
+        const payload = await response.json();
+        const option = {
+          value: payload.font_path || payload.font_id,
+          label: `${payload.family} (uploaded)`,
+          family: payload.family,
+          path: payload.font_path,
+          url: payload.font_url,
+          custom: true,
+        };
+        upsertFontOption(option);
+        setFontSettings((prev) => ({
+          ...prev,
+          family: option.family,
+          option: option.value,
+          path: option.path,
+          url: option.url,
+          isCustom: true,
+        }));
+        appendLog("success", "Font uploaded", { fontId: payload.font_id, family: payload.family });
+      } catch (err) {
+        const message = err?.message || "Font upload failed";
+        setError(message);
+        appendLog("error", "Font upload failed", { message });
+      } finally {
+        setFontUploading(false);
+      }
+    },
+    [appendLog, parseApiError, upsertFontOption]
+  );
+
   const handleSubmit = async () => {
     if (!file) {
       setError("Select an audio file first.");
@@ -328,6 +441,9 @@ function App() {
     formData.append("font_size", fontSettings.size);
     formData.append("font_color", fontSettings.color);
     formData.append("font_weight", fontSettings.weight);
+    if (fontSettings.path) {
+      formData.append("font_custom_path", fontSettings.path);
+    }
     if (trimSelection.active) {
       formData.append("trim_start", trimSelection.start.toString());
       formData.append("trim_end", trimSelection.end.toString());
@@ -505,6 +621,7 @@ function App() {
           font_size: fontSettings.size,
           font_color: fontSettings.color,
           font_weight: fontSettings.weight,
+          font_custom_path: fontSettings.path,
           video_trim_start: videoTrim.start,
           video_trim_end: videoTrim.end,
         }),
@@ -658,6 +775,9 @@ function App() {
           </div>
           <FontEditor
             fontSettings={fontSettings}
+            fontOptions={fontOptions}
+            onUploadFont={handleFontUpload}
+            uploading={fontUploading}
             onChange={(partial) => setFontSettings((prev) => ({ ...prev, ...partial }))}
           />
           <p className="helper-text">Font changes won’t affect the on-page overlay—only the rendered video.</p>

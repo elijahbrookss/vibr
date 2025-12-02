@@ -24,6 +24,7 @@ from pydantic import BaseModel
 VIDEO_SIZE = (720, 1280)
 VIDEO_FPS = 24
 OUTPUT_ROOT = Path("static") / "outputs"
+FONT_UPLOAD_ROOT = Path("static") / "fonts"
 CACHE_INDEX = OUTPUT_ROOT / "cache_index.json"
 METADATA_NAME = "metadata.json"
 FFMPEG_BINARY = shutil.which("ffmpeg") or "ffmpeg"
@@ -91,10 +92,18 @@ def set_cached_output(cache_key: str, output_id: str) -> None:
         write_cache_index(cache)
 
 
-def build_cache_key(audio_hash: str, trim_start: Optional[float], trim_end: Optional[float]) -> str:
-    if trim_start is None or trim_end is None or trim_end <= trim_start:
-        return f"{audio_hash}:full"
-    return f"{audio_hash}:{trim_start:.3f}:{trim_end:.3f}"
+def build_cache_key(
+    audio_hash: str,
+    trim_start: Optional[float],
+    trim_end: Optional[float],
+    style_signature: Optional[str] = None,
+) -> str:
+    base = f"{audio_hash}:full"
+    if trim_start is not None and trim_end is not None and trim_end > trim_start:
+        base = f"{audio_hash}:{trim_start:.3f}:{trim_end:.3f}"
+    if style_signature:
+        return f"{base}:{style_signature}"
+    return base
 
 
 def load_words_metadata(output_dir: Path) -> Optional[List[Dict[str, Any]]]:
@@ -152,6 +161,35 @@ def write_output_metadata(data: Dict[str, Any], output_dir: Path) -> None:
     metadata_path.parent.mkdir(parents=True, exist_ok=True)
     with metadata_path.open("w", encoding="utf-8") as metadata_file:
         json.dump(data, metadata_file)
+
+
+@app.post("/api/fonts")
+async def upload_font(file: UploadFile = File(...)):
+    allowed_extensions = {".ttf", ".otf", ".woff", ".woff2", ".ttc"}
+    extension = Path(file.filename).suffix.lower()
+    if extension not in allowed_extensions:
+        raise HTTPException(status_code=400, detail="Unsupported font type. Upload a TTF, OTF, WOFF, or WOFF2 file.")
+
+    font_id = uuid.uuid4().hex
+    target_dir = FONT_UPLOAD_ROOT / font_id
+    target_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = Path(file.filename).name
+    target_path = target_dir / safe_name
+    await save_upload_file(file, target_path)
+
+    try:
+        relative_path = str(target_path.relative_to(Path("static")))
+    except Exception:
+        relative_path = str(target_path)
+    font_url = f"/static/{relative_path}"
+    family_guess = Path(safe_name).stem.replace("_", " ").replace("-", " ") or "Custom Font"
+    LOGGER.info("uploaded custom font", extra={"font_id": font_id, "path": str(relative_path)})
+    return {
+        "font_id": font_id,
+        "font_path": relative_path,
+        "font_url": font_url,
+        "family": family_guess,
+    }
 
 
 def trim_audio_segment(source: Path, start: float, end: float) -> Path:
@@ -362,11 +400,18 @@ def build_lyrics_file(chunks: List[LyricChunk], destination: Path) -> None:
 
 
 def _build_safe_text_clip(
-    chunk: LyricChunk, font_family: str, font_size: int, font_color: str, font_weight: int
+    chunk: LyricChunk,
+    font_family: str,
+    font_size: int,
+    font_color: str,
+    font_weight: int,
+    font_path: Optional[Path] = None,
 ) -> tuple[TextClip, str, int, tuple[int, int]]:
     safe_width = int(VIDEO_SIZE[0] * SAFE_AREA_WIDTH_RATIO)
     safe_height = int(VIDEO_SIZE[1] * SAFE_AREA_HEIGHT_RATIO)
     font_candidates: list[Optional[str]] = []
+    if font_path:
+        font_candidates.append(str(font_path))
     if font_family:
         if font_weight:
             font_candidates.extend(
@@ -431,6 +476,7 @@ def build_lyric_video(
     font_size: int = DEFAULT_FONT_SIZE,
     font_color: str = DEFAULT_FONT_COLOR,
     font_weight: int = DEFAULT_FONT_WEIGHT,
+    font_path: Optional[Path] = None,
 ) -> str:
     LOGGER.info("building lyric video", extra={"chunks": len(chunks), "destination": str(destination)})
     video_start = time.time()
@@ -442,7 +488,7 @@ def build_lyric_video(
         if not chunk.words:
             continue
         text_clip, used_font, resolved_size, safe_dimensions = _build_safe_text_clip(
-            chunk, font_used, font_size, font_color, font_weight
+            chunk, font_used, font_size, font_color, font_weight, font_path
         )
         prefix_clips: list[TextClip] = []
         for idx, word in enumerate(chunk.words):
@@ -522,6 +568,7 @@ async def process_audio(
     font_size: Optional[float] = Form(None),
     font_color: str = Form(DEFAULT_FONT_COLOR),
     font_weight: Optional[int] = Form(DEFAULT_FONT_WEIGHT),
+    font_custom_path: Optional[str] = Form(None),
 ):
     LOGGER.info(
         "processing audio upload",
@@ -541,7 +588,19 @@ async def process_audio(
         trim_start = max(0.0, trim_start)
     if trim_end is not None:
         trim_end = max(0.0, trim_end)
-    cache_key = build_cache_key(audio_hash, trim_start, trim_end)
+    font_path = resolve_font_path(font_custom_path)
+    if font_custom_path and font_path is None:
+        raise HTTPException(status_code=400, detail="Font file unavailable on the server.")
+
+    style_signature = font_style_signature(
+        font_family or DEFAULT_FONT_FAMILY,
+        int(font_size) if font_size else DEFAULT_FONT_SIZE,
+        font_color or DEFAULT_FONT_COLOR,
+        int(font_weight) if font_weight else DEFAULT_FONT_WEIGHT,
+        font_path,
+    )
+
+    cache_key = build_cache_key(audio_hash, trim_start, trim_end, style_signature)
     cached_output = get_cached_output(cache_key)
     if cached_output:
         cached_dir = OUTPUT_ROOT / cached_output
@@ -609,6 +668,12 @@ async def process_audio(
         total_duration = max((chunk.end for chunk in chunks), default=0.5)
         effective_font_size = int(font_size) if font_size and font_size > 0 else DEFAULT_FONT_SIZE
         effective_font_weight = int(font_weight) if font_weight and font_weight > 0 else DEFAULT_FONT_WEIGHT
+        font_relative_path = None
+        if font_path:
+            try:
+                font_relative_path = str(font_path.relative_to(Path("static")))
+            except Exception:
+                font_relative_path = str(font_path)
         used_font = build_lyric_video(
             chunks,
             video_path,
@@ -617,6 +682,7 @@ async def process_audio(
             font_size=effective_font_size,
             font_color=font_color or DEFAULT_FONT_COLOR,
             font_weight=effective_font_weight,
+            font_path=font_path,
         )
         LOGGER.info("video file written", extra={"path": str(video_path)})
         audio_store_path = output_dir / "audio.wav"
@@ -627,10 +693,12 @@ async def process_audio(
             "video_duration": float(total_duration),
             "video_trim": {"start": 0.0, "end": float(total_duration)},
             "font": {
-                "family": used_font,
+                "family": font_family or DEFAULT_FONT_FAMILY,
                 "size": effective_font_size,
                 "color": font_color or DEFAULT_FONT_COLOR,
                 "weight": effective_font_weight,
+                "path": font_relative_path,
+                "applied": used_font,
             },
         }
         write_output_metadata(metadata, output_dir)
@@ -671,6 +739,7 @@ class UpdatePayload(BaseModel):
     font_size: Optional[float] = None
     font_color: Optional[str] = None
     font_weight: Optional[int] = None
+    font_custom_path: Optional[str] = None
 
 
 @app.post("/api/update")
@@ -731,6 +800,12 @@ def update_output(payload: UpdatePayload):
 
     chunks = build_chunks(filtered_words)
 
+    existing_font_path = metadata.get("font", {}).get("path")
+    requested_font_path = payload.font_custom_path or existing_font_path
+    resolved_font_path = resolve_font_path(requested_font_path) if requested_font_path else None
+    if requested_font_path and resolved_font_path is None:
+        raise HTTPException(status_code=400, detail="Font file unavailable on the server.")
+
     font_settings = {
         "family": payload.font_family or metadata.get("font", {}).get("family", DEFAULT_FONT_FAMILY),
         "size": int(payload.font_size)
@@ -740,6 +815,7 @@ def update_output(payload: UpdatePayload):
         "weight": int(payload.font_weight)
         if payload.font_weight and payload.font_weight > 0
         else int(metadata.get("font", {}).get("weight", DEFAULT_FONT_WEIGHT)),
+        "path": requested_font_path if resolved_font_path else None,
     }
 
     temp_audio = trim_audio_segment(audio_path, trim_start, trim_end)
@@ -754,6 +830,7 @@ def update_output(payload: UpdatePayload):
         font_size=font_settings["size"],
         font_color=font_settings["color"],
         font_weight=font_settings["weight"],
+        font_path=resolved_font_path,
     )
     if temp_audio.exists():
         temp_audio.unlink()
@@ -765,10 +842,12 @@ def update_output(payload: UpdatePayload):
             "video_duration": float(video_duration),
             "video_trim": {"start": float(trim_start), "end": float(trim_end)},
             "font": {
-                "family": used_font,
+                "family": font_settings["family"],
                 "size": font_settings["size"],
                 "color": font_settings["color"],
                 "weight": font_settings["weight"],
+                "path": font_settings["path"],
+                "applied": used_font,
             },
         }
     )
@@ -784,3 +863,32 @@ def update_output(payload: UpdatePayload):
         "metadata": metadata,
         "output_id": payload.output_id,
     }
+def resolve_font_path(font_path: Optional[str]) -> Optional[Path]:
+    if not font_path:
+        return None
+    normalized = font_path.replace("\\", "/")
+    if normalized.startswith("/static/"):
+        normalized = normalized[len("/static/") :]
+    elif normalized.startswith("static/"):
+        normalized = normalized[len("static/") :]
+    candidate = Path("static") / normalized
+    try:
+        resolved = candidate.resolve()
+        static_root = Path("static").resolve()
+        resolved.relative_to(static_root)
+    except Exception:
+        return None
+    return resolved if resolved.exists() else None
+
+
+def font_style_signature(
+    font_family: str, font_size: int, font_color: str, font_weight: int, font_path: Optional[Path]
+) -> str:
+    font_marker = ""
+    if font_path:
+        try:
+            font_marker = str(font_path.stat().st_mtime)
+        except OSError:
+            font_marker = ""
+    seed = f"{font_family}|{font_size}|{font_color}|{font_weight}|{font_marker}"
+    return hashlib.sha1(seed.encode("utf-8")).hexdigest()[:12]

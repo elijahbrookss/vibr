@@ -1,7 +1,6 @@
-const fontFamilies = ["Inter", "Roboto", "Montserrat", "Space Grotesk", "Avenir"];
 const fontWeights = [400, 500, 600, 700, 800];
 
-function FontEditor({ fontSettings, onChange }) {
+function FontEditor({ fontSettings, fontOptions, onChange, onUploadFont, uploading }) {
   const sampleStyle = {
     fontFamily: fontSettings.family,
     fontSize: `${fontSettings.size}px`,
@@ -16,10 +15,23 @@ function FontEditor({ fontSettings, onChange }) {
         <div className="font-control">
           <label>
             Font family
-            <select value={fontSettings.family} onChange={(event) => onChange({ family: event.target.value })}>
-              {fontFamilies.map((family) => (
-                <option key={family} value={family}>
-                  {family}
+            <select
+              value={fontSettings.option}
+              onChange={(event) => {
+                const option = fontOptions.find((candidate) => candidate.value === event.target.value);
+                if (!option) return;
+                onChange({
+                  family: option.family,
+                  option: option.value,
+                  path: option.path ?? null,
+                  url: option.url ?? null,
+                  isCustom: Boolean(option.custom),
+                });
+              }}
+            >
+              {fontOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
                 </option>
               ))}
             </select>
@@ -57,6 +69,27 @@ function FontEditor({ fontSettings, onChange }) {
             value={fontSettings.color}
             onChange={(event) => onChange({ color: event.target.value })}
           />
+        </div>
+        <div className="font-control upload-control">
+          <label>Upload custom font</label>
+          <div className="font-upload-row">
+            <input
+              type="file"
+              accept=".ttf,.otf,.woff,.woff2,.ttc"
+              id="font-upload-input"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) {
+                  onUploadFont(file);
+                }
+                event.target.value = "";
+              }}
+            />
+            <label className="ghost-button" htmlFor="font-upload-input">
+              {uploading ? "Uploading..." : "Choose font file"}
+            </label>
+          </div>
+          <p className="font-upload-hint">Add your own TTF/OTF/WOFF fonts for rendering and preview.</p>
         </div>
       </div>
       <div className="font-preview" aria-live="polite">
