@@ -815,7 +815,7 @@ function App() {
 
       {(showPreview || showLyrics) && (
         <section className="workspace-grid">
-          <div className="page-card focus-card workspace-panel">
+          <div className="page-card focus-card workspace-panel video-panel">
             <div className="section-heading minimal">
               <h3>Video preview</h3>
               <p>Play the render and watch the word highlights follow along.</p>

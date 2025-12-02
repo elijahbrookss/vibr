@@ -168,6 +168,15 @@
   height: 100%;
 }
 
+.video-panel .preview-card {
+  max-height: 100%;
+}
+
+.video-panel .video-wrapper {
+  max-height: 640px;
+  width: 100%;
+}
+
 .lyrics-panel {
   display: flex;
   flex-direction: column;
@@ -216,18 +225,24 @@
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.05em;
+  align-items: center;
 }
 
 .word-grid-header .col-word {
   text-align: left;
+  min-width: 180px;
 }
 
 .word-grid-header .col-time {
-  text-align: center;
+  text-align: right;
+  min-width: 90px;
+  justify-self: flex-end;
 }
 
 .word-grid-header .word-actions-col {
-  text-align: center;
+  text-align: right;
+  min-width: 72px;
+  justify-self: flex-end;
 }
 
 .word-grid-body {
@@ -671,7 +686,7 @@
   background: #000;
   min-height: 240px;
   flex: 1;
-  aspect-ratio: 9 / 16;
+  aspect-ratio: 16 / 9;
   display: flex;
   align-items: center;
   justify-content: center;
