@@ -1,98 +1,111 @@
-import { formatTimestamp } from "../utils/time";
-
 function LyricsPanel({
-  visibleBars,
-  extraCount,
-  setEditingIndex,
-  editingIndex,
-  handleBarTextChange,
-  wordPhases,
+  words,
+  onWordChange,
+  onWordTimeChange,
+  onInsertAfter,
+  onDeleteWord,
+  activeWordId,
+  wordError,
+  rowErrors,
   videoRef,
-  removeBar,
-  addBar,
   applyChanges,
   loading,
 }) {
+  const seekTo = (time) => {
+    if (videoRef?.current) {
+      videoRef.current.currentTime = Math.max(0, time ?? 0);
+    }
+  };
+  const hasWords = words.length > 0;
   return (
     <div className="lyrics-panel">
       <div className="panel-header">
         <div>
           <h3>Rendered lyrics</h3>
-          <p className="subtitle">Double-tap to edit a bar and keep everything in sync.</p>
+          <p className="subtitle">Edit individual words; rendering groups them into four-word chunks.</p>
         </div>
-        <button className="ghost-button" onClick={addBar} type="button">
-          + Add lyric
-        </button>
+        {wordError && <div className="word-error">{wordError}</div>}
       </div>
-      <ol>
-        {visibleBars.length === 0 && <li className="lyric-tip">Generate a take to unlock the lyric grid.</li>}
-        {visibleBars.map((bar, idx) => {
-          const wordsSource =
-            bar.words && bar.words.length
-              ? bar.words
-              : (bar.text ?? "")
-                  .split(/\s+/)
-                  .filter(Boolean)
-                  .map((text) => ({ text }));
-          const phase = wordPhases[idx] ?? "group";
-          const mainWords = wordsSource.slice(0, 5);
-          const overflowWord = wordsSource[5];
-          const displayWords = phase === "single" && overflowWord ? [overflowWord] : mainWords;
-          const isEditing = editingIndex === idx;
-          return (
-            <li key={`${bar.start}-${idx}`} className="lyric-bar">
-              <div className="timestamp-row">
-                <button
-                  type="button"
-                  className="seek"
-                  onClick={() => {
-                    if (videoRef.current) videoRef.current.currentTime = Math.max(0, bar.start);
-                  }}
-                >
-                  Start {formatTimestamp(bar.start)}
-                </button>
-                <span className="timestamp">End {formatTimestamp(bar.end)}</span>
-              </div>
-              <div className={`lyric-edit ${isEditing ? "active" : ""}`}>
-                {isEditing ? (
-                  <textarea
-                    value={bar.text}
-                    onChange={(event) => handleBarTextChange(idx, event.target.value)}
-                    rows={2}
-                    placeholder="Type lyric copy"
-                  />
-                ) : (
-                  <p onDoubleClick={() => setEditingIndex(idx)}>{bar.text || "Double-tap to edit lyric"}</p>
-                )}
-                <div className="lyric-actions">
-                  <button className="ghost-button" onClick={() => setEditingIndex(isEditing ? null : idx)} type="button">
-                    {isEditing ? "Done" : "Edit"}
-                  </button>
-                  <button className="ghost-button" onClick={() => removeBar(idx)} type="button">
-                    Delete
+      <div className="word-grid" aria-live="polite">
+        <div className="word-grid-header">
+          <span className="col-word">Word</span>
+          <span className="col-time">Start</span>
+          <span className="col-time">End</span>
+          <span className="word-actions-col">Actions</span>
+        </div>
+        {!hasWords && <p className="lyric-tip">Generate a take to unlock the lyric grid.</p>}
+        <div className="word-grid-body">
+          {words.map((word, idx) => (
+            <div className="word-row-wrapper" key={word.id}>
+              <div
+                className={`word-row ${activeWordId === word.id ? "active" : ""}`}
+                onClick={() => seekTo(word.start)}
+              >
+                <input
+                  className="word-input"
+                  value={word.text}
+                  onClick={(event) => event.stopPropagation()}
+                  onChange={(event) => onWordChange(word.id, event.target.value)}
+                  aria-label={`Edit word ${word.text}`}
+                />
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  inputMode="decimal"
+                  className="time-input"
+                  value={Number.isFinite(word.start) ? word.start.toFixed(2) : "0.00"}
+                  onClick={(event) => event.stopPropagation()}
+                  onChange={(event) => onWordTimeChange(word.id, "start", event.target.value)}
+                  aria-label={`Set start for ${word.text}`}
+                />
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  inputMode="decimal"
+                  className="time-input"
+                  value={Number.isFinite(word.end) ? word.end.toFixed(2) : "0.00"}
+                  onClick={(event) => event.stopPropagation()}
+                  onChange={(event) => onWordTimeChange(word.id, "end", event.target.value)}
+                  aria-label={`Set end for ${word.text}`}
+                />
+                <div className="word-actions">
+                  {idx < words.length - 1 ? (
+                    <button
+                      type="button"
+                      className="ghost"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onInsertAfter(word.id);
+                      }}
+                      aria-label="Insert a new word after this"
+                    >
+                      +
+                    </button>
+                  ) : (
+                    <span className="word-actions-placeholder" aria-hidden="true">
+                      ·
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    className="ghost delete"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onDeleteWord(word.id);
+                    }}
+                    aria-label={`Delete ${word.text}`}
+                  >
+                    ×
                   </button>
                 </div>
               </div>
-              <div className="bar-words animated">
-                {displayWords.map((word, idy) => (
-                  <span
-                    key={`${word.text}-${idy}`}
-                    className="word-chip"
-                    onClick={() => {
-                      if (videoRef.current) {
-                        videoRef.current.currentTime = Math.max(0, word.start ?? bar.start);
-                      }
-                    }}
-                  >
-                    {word.text}
-                  </span>
-                ))}
-              </div>
-            </li>
-          );
-        })}
-        {extraCount > 0 && <li className="lyric-note">+{extraCount} additional bars hidden above</li>}
-      </ol>
+              {rowErrors?.[word.id] && <div className="row-error">{rowErrors[word.id]}</div>}
+            </div>
+          ))}
+        </div>
+      </div>
       <div className="update-actions">
         <button className="primary" onClick={applyChanges} disabled={loading}>
           {loading ? "Updating..." : "Update video & lyrics"}

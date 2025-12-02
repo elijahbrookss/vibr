@@ -21,21 +21,27 @@ from moviepy.video.VideoClip import ColorClip, TextClip
 from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
 from pydantic import BaseModel
 
-BAR_PAUSE_THRESHOLD = 0.35
-MAX_BAR_DURATION = 4.0
-PREFERRED_BAR_WORDS = 10
 VIDEO_SIZE = (720, 1280)
 VIDEO_FPS = 24
 OUTPUT_ROOT = Path("static") / "outputs"
+FONT_UPLOAD_ROOT = Path("static") / "fonts"
 CACHE_INDEX = OUTPUT_ROOT / "cache_index.json"
-MAX_WORDS_PER_BAR = 20
-BARS_METADATA_NAME = "bars.json"
 METADATA_NAME = "metadata.json"
 FFMPEG_BINARY = shutil.which("ffmpeg") or "ffmpeg"
 DEFAULT_FONT_FAMILY = "DejaVu-Sans"
 DEFAULT_FONT_SIZE = 70
 DEFAULT_FONT_COLOR = "white"
+DEFAULT_FONT_WEIGHT = 600
 FALLBACK_FONT_FAMILY = "DejaVu-Sans"
+MAX_WORDS_PER_CHUNK = 4
+MAX_GAP_BETWEEN_WORDS = 0.3
+WORDS_METADATA_NAME = "words.json"
+CHUNKS_METADATA_NAME = "chunks.json"
+SAFE_AREA_WIDTH_RATIO = 0.88
+SAFE_AREA_HEIGHT_RATIO = 0.28
+MIN_FONT_SIZE = 36
+MIN_WORD_DURATION = 0.015
+OVERLAP_EPSILON = 0.001
 
 MODEL: Optional[whisper.Whisper] = None
 LOGGER = logging.getLogger("lyric_backend")
@@ -87,26 +93,53 @@ def set_cached_output(cache_key: str, output_id: str) -> None:
         write_cache_index(cache)
 
 
-def build_cache_key(audio_hash: str, trim_start: Optional[float], trim_end: Optional[float]) -> str:
-    if trim_start is None or trim_end is None or trim_end <= trim_start:
-        return f"{audio_hash}:full"
-    return f"{audio_hash}:{trim_start:.3f}:{trim_end:.3f}"
+def build_cache_key(
+    audio_hash: str,
+    trim_start: Optional[float],
+    trim_end: Optional[float],
+    style_signature: Optional[str] = None,
+) -> str:
+    base = f"{audio_hash}:full"
+    if trim_start is not None and trim_end is not None and trim_end > trim_start:
+        base = f"{audio_hash}:{trim_start:.3f}:{trim_end:.3f}"
+    if style_signature:
+        return f"{base}:{style_signature}"
+    return base
 
 
-def load_bars_metadata(output_dir: Path) -> Optional[List[Dict[str, Any]]]:
-    metadata_path = output_dir / BARS_METADATA_NAME
+def load_words_metadata(output_dir: Path) -> Optional[List[Dict[str, Any]]]:
+    metadata_path = output_dir / WORDS_METADATA_NAME
     if not metadata_path.exists():
         return None
     try:
         with metadata_path.open("r", encoding="utf-8") as metadata_file:
             return json.load(metadata_file)
     except json.JSONDecodeError:
-        LOGGER.warning("bars metadata corrupted, resetting", extra={"path": str(metadata_path)})
+        LOGGER.warning("words metadata corrupted, resetting", extra={"path": str(metadata_path)})
         return None
 
 
-def write_bars_metadata(payload: List[Dict[str, Any]], output_dir: Path) -> None:
-    metadata_path = output_dir / BARS_METADATA_NAME
+def write_words_metadata(payload: List[Dict[str, Any]], output_dir: Path) -> None:
+    metadata_path = output_dir / WORDS_METADATA_NAME
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    with metadata_path.open("w", encoding="utf-8") as metadata_file:
+        json.dump(payload, metadata_file)
+
+
+def load_chunks_metadata(output_dir: Path) -> Optional[List[Dict[str, Any]]]:
+    metadata_path = output_dir / CHUNKS_METADATA_NAME
+    if not metadata_path.exists():
+        return None
+    try:
+        with metadata_path.open("r", encoding="utf-8") as metadata_file:
+            return json.load(metadata_file)
+    except json.JSONDecodeError:
+        LOGGER.warning("chunks metadata corrupted, resetting", extra={"path": str(metadata_path)})
+        return None
+
+
+def write_chunks_metadata(payload: List[Dict[str, Any]], output_dir: Path) -> None:
+    metadata_path = output_dir / CHUNKS_METADATA_NAME
     metadata_path.parent.mkdir(parents=True, exist_ok=True)
     with metadata_path.open("w", encoding="utf-8") as metadata_file:
         json.dump(payload, metadata_file)
@@ -129,6 +162,35 @@ def write_output_metadata(data: Dict[str, Any], output_dir: Path) -> None:
     metadata_path.parent.mkdir(parents=True, exist_ok=True)
     with metadata_path.open("w", encoding="utf-8") as metadata_file:
         json.dump(data, metadata_file)
+
+
+@app.post("/api/fonts")
+async def upload_font(file: UploadFile = File(...)):
+    allowed_extensions = {".ttf", ".otf", ".woff", ".woff2", ".ttc"}
+    extension = Path(file.filename).suffix.lower()
+    if extension not in allowed_extensions:
+        raise HTTPException(status_code=400, detail="Unsupported font type. Upload a TTF, OTF, WOFF, or WOFF2 file.")
+
+    font_id = uuid.uuid4().hex
+    target_dir = FONT_UPLOAD_ROOT / font_id
+    target_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = Path(file.filename).name
+    target_path = target_dir / safe_name
+    await save_upload_file(file, target_path)
+
+    try:
+        relative_path = str(target_path.relative_to(Path("static")))
+    except Exception:
+        relative_path = str(target_path)
+    font_url = f"/static/{relative_path}"
+    family_guess = Path(safe_name).stem.replace("_", " ").replace("-", " ") or "Custom Font"
+    LOGGER.info("uploaded custom font", extra={"font_id": font_id, "path": str(relative_path)})
+    return {
+        "font_id": font_id,
+        "font_path": relative_path,
+        "font_url": font_url,
+        "family": family_guess,
+    }
 
 
 def trim_audio_segment(source: Path, start: float, end: float) -> Path:
@@ -202,10 +264,32 @@ async def log_requests(request: Request, call_next):
 
 
 @dataclass
-class LyricBar:
+class Word:
+    id: str
     text: str
     start: float
     end: float
+
+
+@dataclass
+class LyricChunk:
+    text: str
+    start: float
+    end: float
+    words: List[Word]
+
+
+@dataclass
+class ValidationAdjustments:
+    shifted: List[Dict[str, Any]]
+    batched: List[Dict[str, Any]]
+    dropped: List[Dict[str, Any]]
+
+
+@dataclass
+class ValidationResult:
+    words: List[Word]
+    adjustments: ValidationAdjustments
 
 
 def get_whisper_model() -> whisper.Whisper:
@@ -222,164 +306,416 @@ async def save_upload_file(upload_file: UploadFile, destination: Path) -> None:
     await upload_file.close()
 
 
-def extract_words(result: dict) -> List[dict]:
-    words = []
+def extract_words(result: dict) -> List[Word]:
+    words: List[Word] = []
+    discarded: List[dict] = []
+
     for seg_idx, segment in enumerate(result.get("segments", [])):
-        for word_info in segment.get("words", []):
+        segment_words = segment.get("words", [])
+        for word_idx, word_info in enumerate(segment_words):
             word_text = word_info.get("word", "").strip()
             if not word_text:
                 continue
+
+            raw_start = word_info.get("start")
+            raw_end = word_info.get("end")
+            try:
+                start_val = float(raw_start) if raw_start is not None else None
+                end_val = float(raw_end) if raw_end is not None else None
+            except (TypeError, ValueError):
+                start_val = None
+                end_val = None
+
+            if start_val is None:
+                discarded.append({"segment": seg_idx, "index": word_idx, "text": word_text, "reason": "missing_start"})
+                continue
+
+            # Attempt to repair missing or zero-length end values using the next word/segment end.
+            if end_val is None or end_val <= start_val:
+                next_start = None
+                if word_idx + 1 < len(segment_words):
+                    try:
+                        next_start = float(segment_words[word_idx + 1].get("start"))
+                    except (TypeError, ValueError, KeyError):
+                        next_start = None
+                segment_end = None
+                try:
+                    segment_end = float(segment.get("end"))
+                except (TypeError, ValueError):
+                    segment_end = None
+                candidate_end = None
+                if next_start is not None and next_start > start_val:
+                    candidate_end = max(next_start - 0.001, start_val + MIN_WORD_DURATION)
+                elif segment_end is not None and segment_end > start_val:
+                    candidate_end = max(segment_end, start_val + MIN_WORD_DURATION)
+
+                if candidate_end and candidate_end > start_val:
+                    end_val = candidate_end
+                else:
+                    discarded.append(
+                        {
+                            "segment": seg_idx,
+                            "index": word_idx,
+                            "text": word_text,
+                            "reason": "invalid_or_zero_length",
+                            "start": start_val,
+                            "end": end_val,
+                        }
+                    )
+                    continue
+
             words.append(
-                {
-                    "text": word_text,
-                    "start": float(word_info.get("start", 0.0)),
-                    "end": float(word_info.get("end", 0.0)),
-                    "segment_index": seg_idx,
-                }
+                Word(
+                    id=f"{seg_idx}-{word_idx}",
+                    text=word_text,
+                    start=start_val,
+                    end=end_val,
+                )
             )
+
+    if discarded:
+        LOGGER.warning("discarded words with invalid timings", extra={"count": len(discarded), "words": discarded[:10]})
+
     return words
 
 
-def build_bars_payload(bars: List[LyricBar], words: List[dict]) -> List[Dict[str, Any]]:
-    payload: List[Dict[str, Any]] = []
-    word_idx = 0
-    total_words = len(words)
-    tolerance = 1e-3
+def chunk_from_words(words: List[Word]) -> LyricChunk:
+    return LyricChunk(
+        text=" ".join(word.text for word in words),
+        start=min((word.start for word in words), default=0.0),
+        end=max((word.end for word in words), default=0.0),
+        words=words,
+    )
 
-    for bar in bars:
-        bar_words: List[Dict[str, float]] = []
-        while word_idx < total_words and words[word_idx]["end"] <= bar.start + tolerance:
-            word_idx += 1
 
-        temp_idx = word_idx
-        while temp_idx < total_words and words[temp_idx]["start"] <= bar.end + tolerance:
-            word = words[temp_idx]
-            bar_words.append(
-                {
-                    "text": word["text"],
-                    "start": float(word["start"]),
-                    "end": float(word["end"]),
-                }
+def build_chunks(words: List[Word]) -> List[LyricChunk]:
+    if not words:
+        return []
+    sorted_words = sorted(words, key=lambda w: w.start)
+    chunks: List[LyricChunk] = []
+    current: List[Word] = []
+
+    for word in sorted_words:
+        if not current:
+            current.append(word)
+            continue
+        gap = word.start - current[-1].end
+        if gap > MAX_GAP_BETWEEN_WORDS or len(current) >= MAX_WORDS_PER_CHUNK:
+            chunks.append(chunk_from_words(current))
+            current = [word]
+            continue
+        current.append(word)
+
+    if current:
+        chunks.append(chunk_from_words(current))
+
+    return chunks
+
+
+def validate_word_timings(words: List[Word], total_duration: Optional[float] = None) -> ValidationResult:
+    ordered = sorted(words, key=lambda w: (w.start, w.end))
+    adjusted: List[Word] = []
+    adjustments = ValidationAdjustments(shifted=[], batched=[], dropped=[])
+
+    idx = 0
+    while idx < len(ordered):
+        word = ordered[idx]
+        if word.start < 0 or word.end < 0:
+            raise HTTPException(status_code=400, detail="Word timings cannot be negative.")
+        if word.end <= word.start:
+            raise HTTPException(status_code=400, detail=f"Word '{word.text}' must end after it starts.")
+        duration = word.end - word.start
+        duration_ms = int(round(duration * 1000))
+        if duration < MIN_WORD_DURATION:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Word '{word.text}' must be at least {int(MIN_WORD_DURATION * 1000)}ms "
+                    f"long (got {duration_ms}ms; start={word.start:.3f}, end={word.end:.3f})."
+                ),
             )
-            temp_idx += 1
 
-        word_idx = temp_idx
-        if not bar_words:
-            bar_words.append(
-                {
-                    "text": bar.text,
-                    "start": float(bar.start),
-                    "end": float(bar.end),
-                }
-            )
-
-        payload.append(
-            {
-                "text": bar.text,
-                "start": float(bar.start),
-                "end": float(bar.end),
-                "words": bar_words,
-            }
-        )
-
-    return payload
-
-
-def split_into_bars(words: List[dict]) -> List[LyricBar]:
-    bars: List[LyricBar] = []
-    current_words: List[str] = []
-    current_start = 0.0
-    current_end = 0.0
-    BREAK_PUNCTUATION = {".", "?", "!", ";", ":"}
-
-    def flush_bar(end_time: float) -> None:
-        nonlocal current_words
-        if not current_words:
-            return
-        bars.append(LyricBar(" ".join(current_words), current_start, end_time))
-        current_words = []
-
-    for word in words:
-        start = word["start"]
-        end = word["end"]
-        text = word["text"]
-        pause = start - current_end if current_words else 0.0
-        duration = current_end - current_start if current_words else 0.0
-
-        if current_words and (pause >= BAR_PAUSE_THRESHOLD or duration >= MAX_BAR_DURATION):
-            flush_bar(current_end)
-
-        if not current_words:
-            current_start = start
-
-        current_words.append(text)
-        current_end = end
-
-        if len(current_words) >= MAX_WORDS_PER_BAR:
-            flush_bar(current_end)
+        if not adjusted:
+            adjusted.append(word)
+            idx += 1
             continue
 
-        if (
-            len(current_words) >= PREFERRED_BAR_WORDS
-            or (text and text[-1] in BREAK_PUNCTUATION and len(current_words) >= 2)
-        ):
-            flush_bar(current_end)
+        previous = adjusted[-1]
+        previous_end = previous.end
+        if word.start >= previous_end - OVERLAP_EPSILON:
+            adjusted.append(word)
+            idx += 1
+            continue
 
-    if current_words:
-        flush_bar(current_end)
+        # Attempt to shift the word forward to resolve the overlap while preserving duration.
+        candidate_start = previous_end + OVERLAP_EPSILON
+        candidate_end = candidate_start + duration
+        next_start = ordered[idx + 1].start if idx + 1 < len(ordered) else None
+        fits_after_shift = True
+        if next_start is not None and candidate_end > next_start - OVERLAP_EPSILON:
+            fits_after_shift = False
+        if total_duration is not None and candidate_end > total_duration + 0.001:
+            fits_after_shift = False
 
-    return bars
+        if fits_after_shift:
+            adjustments.shifted.append(
+                {
+                    "id": word.id,
+                    "text": word.text,
+                    "from": {"start": word.start, "end": word.end},
+                    "to": {"start": candidate_start, "end": candidate_end},
+                }
+            )
+            adjusted.append(Word(id=word.id, text=word.text, start=candidate_start, end=candidate_end))
+            idx += 1
+            continue
+
+        # Attempt to batch a small overlapping group (up to four words) into a single merged word.
+        group: List[Word] = [previous, word]
+        adjusted.pop()
+        group_end = max(previous.end, word.end)
+        group_start = min(previous.start, word.start)
+        next_idx = idx + 1
+        while next_idx < len(ordered) and len(group) < 4:
+            candidate = ordered[next_idx]
+            if candidate.start <= group_end + OVERLAP_EPSILON:
+                group.append(candidate)
+                group_end = max(group_end, candidate.end)
+                next_idx += 1
+            else:
+                break
+
+        if len(group) <= 4:
+            merged = Word(
+                id="+".join(w.id for w in group),
+                text=" ".join(w.text for w in group),
+                start=group_start,
+                end=group_end,
+            )
+            adjustments.batched.append(
+                {
+                    "ids": [w.id for w in group],
+                    "text": merged.text,
+                    "start": merged.start,
+                    "end": merged.end,
+                }
+            )
+            adjusted.append(merged)
+            idx = next_idx
+            continue
+
+        # Drop the offending word if shifting and batching fail.
+        adjustments.dropped.append(
+            {"id": word.id, "text": word.text, "start": word.start, "end": word.end, "reason": "overlap_unresolved"}
+        )
+        adjusted.append(previous)
+        idx += 1
+
+    # Final pass to ensure ordering and duration integrity after adjustments.
+    previous_end = 0.0
+    for word in adjusted:
+        if total_duration is not None and word.end > total_duration + 0.001:
+            raise HTTPException(status_code=400, detail="Word timing exceeds the available audio duration.")
+        if word.end - word.start < MIN_WORD_DURATION:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Word '{word.text}' must be at least {int(MIN_WORD_DURATION * 1000)}ms "
+                    f"long (got {int(round((word.end - word.start) * 1000))}ms; start={word.start:.3f}, end={word.end:.3f})."
+                ),
+            )
+        if word.start < previous_end - OVERLAP_EPSILON:
+            overlap_ms = int(round((previous_end - word.start) * 1000))
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Words must be ordered without overlapping. "
+                    f"Word '{word.text}' (id={word.id}) starts at {word.start:.3f}s and ends at {word.end:.3f}s, "
+                    f"which is {overlap_ms}ms before the previous end {previous_end:.3f}s."
+                ),
+            )
+        previous_end = word.end
+
+    if adjustments.dropped:
+        LOGGER.warning(
+            "dropped overlapping words after auto-resolution attempts",
+            extra={"count": len(adjustments.dropped), "words": adjustments.dropped},
+        )
+    if adjustments.shifted:
+        LOGGER.info(
+            "auto-shifted overlapping words",
+            extra={"count": len(adjustments.shifted), "words": adjustments.shifted[:10]},
+        )
+    if adjustments.batched:
+        LOGGER.info(
+            "batched overlapping words",
+            extra={"count": len(adjustments.batched), "words": adjustments.batched[:10]},
+        )
+
+    return ValidationResult(words=adjusted, adjustments=adjustments)
 
 
-def build_lyrics_file(bars: List[LyricBar], destination: Path) -> None:
+def words_payload(words: List[Word]) -> List[Dict[str, Any]]:
+    return [
+        {
+            "id": word.id,
+            "text": word.text,
+            "start": float(word.start),
+            "end": float(word.end),
+        }
+        for word in words
+    ]
+
+
+def chunks_payload(chunks: List[LyricChunk]) -> List[Dict[str, Any]]:
+    return [
+        {
+            "text": chunk.text,
+            "start": float(chunk.start),
+            "end": float(chunk.end),
+            "words": words_payload(chunk.words),
+        }
+        for chunk in chunks
+    ]
+
+
+def build_lyrics_file(chunks: List[LyricChunk], destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     with destination.open("w", encoding="utf-8") as lyrics_file:
-        for bar in bars:
-            lyrics_file.write(f"{bar.text}\n")
+        for chunk in chunks:
+            lyrics_file.write(f"{chunk.text}\n")
+
+
+def _build_safe_text_clip(
+    chunk: LyricChunk,
+    font_family: str,
+    font_size: int,
+    font_color: str,
+    font_weight: int,
+    font_path: Optional[Path] = None,
+) -> tuple[TextClip, str, int, tuple[int, int]]:
+    safe_width = int(VIDEO_SIZE[0] * SAFE_AREA_WIDTH_RATIO)
+    safe_height = int(VIDEO_SIZE[1] * SAFE_AREA_HEIGHT_RATIO)
+    font_candidates: list[Optional[str]] = []
+    if font_path:
+        font_candidates.append(str(font_path))
+    if font_family:
+        if font_weight:
+            font_candidates.extend(
+                [
+                    f"{font_family}-{font_weight}",
+                    f"{font_family} {font_weight}",
+                    f"{font_family}:{font_weight}",
+                ]
+            )
+        font_candidates.append(font_family)
+    font_candidates.append(None)
+    chosen_font = font_family
+    current_size = font_size
+    picked_size = current_size
+    last_clip: Optional[TextClip] = None
+    last_font_used: Optional[str] = chosen_font
+    while current_size >= MIN_FONT_SIZE:
+        clip: Optional[TextClip] = None
+        selected_font: Optional[str] = chosen_font
+        for candidate in font_candidates:
+            try:
+                clip = TextClip(
+                    text=chunk.text,
+                    font_size=current_size,
+                    font=candidate,
+                    color=font_color,
+                    size=(safe_width, safe_height),
+                    method="caption",
+                )
+                selected_font = candidate
+                break
+            except ValueError:
+                LOGGER.warning("font unavailable, falling back to default", extra={"font": candidate or "default"})
+                continue
+        if clip is None:
+            current_size = current_size - 2
+            chosen_font = None
+            continue
+        last_clip = clip
+        picked_size = current_size
+        last_font_used = selected_font
+        if clip.w <= safe_width and clip.h <= safe_height:
+            return clip, selected_font or FALLBACK_FONT_FAMILY, picked_size, (safe_width, safe_height)
+        current_size -= 2
+    if last_clip is None:
+        last_clip = TextClip(
+            text=chunk.text,
+            font_size=MIN_FONT_SIZE,
+            color=font_color,
+            size=(safe_width, safe_height),
+            method="caption",
+        )
+        picked_size = MIN_FONT_SIZE
+    return last_clip, last_font_used or FALLBACK_FONT_FAMILY, picked_size, (safe_width, safe_height)
 
 
 def build_lyric_video(
-    bars: List[LyricBar],
+    chunks: List[LyricChunk],
     destination: Path,
     audio_path: Path,
     font_family: str = DEFAULT_FONT_FAMILY,
     font_size: int = DEFAULT_FONT_SIZE,
     font_color: str = DEFAULT_FONT_COLOR,
+    font_weight: int = DEFAULT_FONT_WEIGHT,
+    font_path: Optional[Path] = None,
 ) -> str:
-    LOGGER.info("building lyric video", extra={"bars": len(bars), "destination": str(destination)})
+    LOGGER.info("building lyric video", extra={"chunks": len(chunks), "destination": str(destination)})
     video_start = time.time()
-    total_duration = max((bar.end for bar in bars), default=0.5)
+    total_duration = max((chunk.end for chunk in chunks), default=0.5)
     background = ColorClip(size=VIDEO_SIZE, color=(0, 0, 0), duration=total_duration)
     text_clips = []
     font_used = font_family
-    for bar in bars:
-        bar_duration = max(bar.end - bar.start, 0.5)
-        used_font = font_used
-        try:
-            text_clip = TextClip(
-                text=bar.text,
-                font_size=font_size,
-                font=used_font,
-                color=font_color,
-                size=VIDEO_SIZE,
-                method="caption",
+    for chunk in chunks:
+        if not chunk.words:
+            continue
+        text_clip, used_font, resolved_size, safe_dimensions = _build_safe_text_clip(
+            chunk, font_used, font_size, font_color, font_weight, font_path
+        )
+        prefix_clips: list[TextClip] = []
+        for idx, word in enumerate(chunk.words):
+            prefix_text = " ".join(w.text for w in chunk.words[: idx + 1])
+            next_start = chunk.words[idx + 1].start if idx + 1 < len(chunk.words) else chunk.end
+            gap = max(next_start - word.start, 0.0)
+            if idx + 1 < len(chunk.words):
+                duration = gap if gap > 0 else MIN_WORD_DURATION
+            else:
+                duration = max(chunk.end - word.start, MIN_WORD_DURATION)
+            try:
+                word_clip = TextClip(
+                    text=prefix_text,
+                    font_size=resolved_size,
+                    font=used_font,
+                    color=font_color,
+                    size=safe_dimensions,
+                    method="caption",
+                )
+            except ValueError:
+                LOGGER.warning("word clip font fallback", extra={"font": used_font})
+                word_clip = TextClip(
+                    text=prefix_text,
+                    font_size=resolved_size,
+                    color=font_color,
+                    size=safe_dimensions,
+                    method="caption",
+                )
+            word_clip = (
+                word_clip.with_start(word.start)
+                .with_duration(duration)
+                .with_position("center")
             )
-        except ValueError:
-            LOGGER.warning("font unavailable, falling back to default", extra={"font": used_font})
-            used_font = None
-            text_clip = TextClip(
-                text=bar.text,
-                font_size=font_size,
-                color=font_color,
-                size=VIDEO_SIZE,
-                method="caption",
-            )
-        text_clip = text_clip.with_start(bar.start).with_duration(bar_duration).with_position("center")
-        text_clips.append(text_clip)
+            prefix_clips.append(word_clip)
+        text_clip.close()
+        text_clips.extend(prefix_clips)
         font_used = used_font
 
     if not text_clips:
-        raise RuntimeError("Cannot build a video without lyric bars.")
+        raise RuntimeError("Cannot build a video without lyric chunks.")
 
     video = CompositeVideoClip([background, *text_clips])
     video = video.with_duration(total_duration)
@@ -418,6 +754,8 @@ async def process_audio(
     font_family: str = Form(DEFAULT_FONT_FAMILY),
     font_size: Optional[float] = Form(None),
     font_color: str = Form(DEFAULT_FONT_COLOR),
+    font_weight: Optional[int] = Form(DEFAULT_FONT_WEIGHT),
+    font_custom_path: Optional[str] = Form(None),
 ):
     LOGGER.info(
         "processing audio upload",
@@ -437,13 +775,26 @@ async def process_audio(
         trim_start = max(0.0, trim_start)
     if trim_end is not None:
         trim_end = max(0.0, trim_end)
-    cache_key = build_cache_key(audio_hash, trim_start, trim_end)
+    font_path = resolve_font_path(font_custom_path)
+    if font_custom_path and font_path is None:
+        raise HTTPException(status_code=400, detail="Font file unavailable on the server.")
+
+    style_signature = font_style_signature(
+        font_family or DEFAULT_FONT_FAMILY,
+        int(font_size) if font_size else DEFAULT_FONT_SIZE,
+        font_color or DEFAULT_FONT_COLOR,
+        int(font_weight) if font_weight else DEFAULT_FONT_WEIGHT,
+        font_path,
+    )
+
+    cache_key = build_cache_key(audio_hash, trim_start, trim_end, style_signature)
     cached_output = get_cached_output(cache_key)
     if cached_output:
         cached_dir = OUTPUT_ROOT / cached_output
         cached_video = cached_dir / "lyrics.mp4"
         cached_lyrics = cached_dir / "lyrics.txt"
-        cached_bars = load_bars_metadata(cached_dir)
+        cached_words = load_words_metadata(cached_dir)
+        cached_chunks = load_chunks_metadata(cached_dir)
         cached_metadata = load_output_metadata(cached_dir)
         if cached_video.exists() and cached_lyrics.exists():
             LOGGER.info("cache hit, returning existing assets", extra={"cache_key": audio_hash})
@@ -452,8 +803,10 @@ async def process_audio(
                 "video_url": f"/static/outputs/{cached_output}/lyrics.mp4",
                 "output_id": cached_output,
             }
-            if cached_bars:
-                response["bars"] = cached_bars
+            if cached_words:
+                response["words"] = cached_words
+            if cached_chunks:
+                response["chunks"] = cached_chunks
             if cached_metadata:
                 response["metadata"] = cached_metadata
             return response
@@ -483,11 +836,12 @@ async def process_audio(
         duration_ms = (time.time() - start_transcription) * 1000
         LOGGER.info("transcription complete", extra={"duration_ms": f"{duration_ms:.2f}", "segments": len(transcription.get("segments", []))})
 
-        words = extract_words(transcription)
+        validation = validate_word_timings(extract_words(transcription))
+        words = validation.words
         LOGGER.info("extracted words", extra={"count": len(words)})
-        bars = split_into_bars(words)
-        LOGGER.info("split into bars", extra={"bars": len(bars)})
-        if not bars:
+        chunks = build_chunks(words)
+        LOGGER.info("built chunks", extra={"chunks": len(chunks)})
+        if not chunks:
             raise HTTPException(status_code=400, detail="No lyrics detected in the provided audio.")
 
         output_id = uuid.uuid4().hex
@@ -497,17 +851,26 @@ async def process_audio(
         lyrics_path = output_dir / "lyrics.txt"
         video_path = output_dir / "lyrics.mp4"
 
-        build_lyrics_file(bars, lyrics_path)
+        build_lyrics_file(chunks, lyrics_path)
         LOGGER.info("lyrics file written", extra={"path": str(lyrics_path)})
-        total_duration = max((bar.end for bar in bars), default=0.5)
+        total_duration = max((chunk.end for chunk in chunks), default=0.5)
         effective_font_size = int(font_size) if font_size and font_size > 0 else DEFAULT_FONT_SIZE
+        effective_font_weight = int(font_weight) if font_weight and font_weight > 0 else DEFAULT_FONT_WEIGHT
+        font_relative_path = None
+        if font_path:
+            try:
+                font_relative_path = str(font_path.relative_to(Path("static")))
+            except Exception:
+                font_relative_path = str(font_path)
         used_font = build_lyric_video(
-            bars,
+            chunks,
             video_path,
             selected_audio_path,
             font_family=font_family or DEFAULT_FONT_FAMILY,
             font_size=effective_font_size,
             font_color=font_color or DEFAULT_FONT_COLOR,
+            font_weight=effective_font_weight,
+            font_path=font_path,
         )
         LOGGER.info("video file written", extra={"path": str(video_path)})
         audio_store_path = output_dir / "audio.wav"
@@ -518,26 +881,43 @@ async def process_audio(
             "video_duration": float(total_duration),
             "video_trim": {"start": 0.0, "end": float(total_duration)},
             "font": {
-                "family": used_font,
+                "family": font_family or DEFAULT_FONT_FAMILY,
                 "size": effective_font_size,
                 "color": font_color or DEFAULT_FONT_COLOR,
+                "weight": effective_font_weight,
+                "path": font_relative_path,
+                "applied": used_font,
             },
         }
         write_output_metadata(metadata, output_dir)
         set_cached_output(cache_key, output_id)
 
-        # Prepare bars data for frontend (text + timestamps)
-        bars_payload = build_bars_payload(bars, words)
+        words_data = words_payload(words)
+        chunks_data = chunks_payload(chunks)
 
-        write_bars_metadata(bars_payload, output_dir)
+        write_words_metadata(words_data, output_dir)
+        write_chunks_metadata(chunks_data, output_dir)
 
-        return {
+        response = {
             "lyrics_url": f"/static/outputs/{output_id}/lyrics.txt",
             "video_url": f"/static/outputs/{output_id}/lyrics.mp4",
-            "bars": bars_payload,
+            "words": words_data,
+            "chunks": chunks_data,
             "metadata": metadata,
             "output_id": output_id,
         }
+        if (
+            validation.adjustments.shifted
+            or validation.adjustments.batched
+            or validation.adjustments.dropped
+        ):
+            response["timing_adjustments"] = {
+                "shifted": validation.adjustments.shifted,
+                "batched": validation.adjustments.batched,
+                "dropped": validation.adjustments.dropped,
+            }
+
+        return response
     except HTTPException:
         raise
     except Exception:
@@ -552,73 +932,81 @@ async def process_audio(
 
 class UpdatePayload(BaseModel):
     output_id: str
-    updated_bars: Optional[List[Dict[str, Any]]] = None
+    updated_words: Optional[List[Dict[str, Any]]] = None
     video_trim_start: Optional[float] = None
     video_trim_end: Optional[float] = None
     font_family: Optional[str] = None
     font_size: Optional[float] = None
     font_color: Optional[str] = None
+    font_weight: Optional[int] = None
+    font_custom_path: Optional[str] = None
 
 
 @app.post("/api/update")
 def update_output(payload: UpdatePayload):
     output_dir = OUTPUT_ROOT / payload.output_id
     if not output_dir.exists():
-        raise HTTPException(status_code=404, detail="Output not found.")
+        LOGGER.warning("update requested for missing output", extra={"output_id": payload.output_id})
+        raise HTTPException(
+            status_code=404,
+            detail="Output not found. Please regenerate your video before applying edits.",
+        )
 
     metadata = load_output_metadata(output_dir)
     audio_path = output_dir / metadata.get("audio_path", "audio.wav")
     if not audio_path.exists():
         raise HTTPException(status_code=404, detail="Associated audio not available.")
 
-    bars_data = payload.updated_bars or load_bars_metadata(output_dir)
-    if not bars_data:
-        raise HTTPException(status_code=400, detail="No lyric bars to update.")
+    current_trim_offset = metadata.get("video_trim", {}).get("start", 0.0)
+    source_words = payload.updated_words if payload.updated_words is not None else load_words_metadata(output_dir)
+    if not source_words:
+        raise HTTPException(status_code=400, detail="No lyric words to update.")
 
-    original_duration = metadata.get("video_duration", max((bar.get("end", 0.0) for bar in bars_data), default=0.0))
+    offset = current_trim_offset if payload.updated_words is not None else 0.0
+    base_words: List[Word] = []
+    for idx, word in enumerate(source_words):
+        raw_id = word.get("id")
+        resolved_id = str(raw_id) if raw_id is not None else f"{idx}-{uuid.uuid4().hex[:8]}"
+        base_words.append(
+            Word(
+                id=resolved_id,
+                text=word.get("text", ""),
+                start=float(word.get("start", 0.0)) + offset,
+                end=float(word.get("end", 0.0)) + offset,
+            )
+        )
+
+    original_duration = metadata.get("video_duration", max((word.end for word in base_words), default=0.0))
+    base_validation = validate_word_timings(base_words, original_duration)
+    base_words = base_validation.words
     trim_start = payload.video_trim_start if payload.video_trim_start is not None else metadata.get("video_trim", {}).get("start", 0.0)
     trim_end = payload.video_trim_end if payload.video_trim_end is not None else metadata.get("video_trim", {}).get("end", original_duration)
     trim_start = max(0.0, min(trim_start, original_duration))
     trim_end = max(trim_start + 0.001, min(trim_end, original_duration))
 
-    filtered_bars: List[Dict[str, Any]] = []
-    for bar in bars_data:
-        start = float(bar.get("start", 0.0))
-        end = float(bar.get("end", 0.0))
-        if end <= trim_start or start >= trim_end:
+    filtered_words: List[Word] = []
+    for word in base_words:
+        if word.end <= trim_start or word.start >= trim_end:
             continue
-        new_start = max(start, trim_start) - trim_start
-        new_end = min(end, trim_end) - trim_start
-        if new_end <= new_start:
+        word_start = max(word.start, trim_start) - trim_start
+        word_end = min(word.end, trim_end) - trim_start
+        if word_end <= word_start:
             continue
-        adjusted_words = []
-        for word in bar.get("words", []):
-            wstart = float(word.get("start", 0.0))
-            wend = float(word.get("end", 0.0))
-            if wend <= trim_start or wstart >= trim_end:
-                continue
-            word_start = max(wstart, trim_start) - trim_start
-            word_end = min(wend, trim_end) - trim_start
-            if word_end <= word_start:
-                continue
-            adjusted_words.append(
-                {
-                    "text": word.get("text", ""),
-                    "start": float(word_start),
-                    "end": float(word_end),
-                }
-            )
-        filtered_bars.append(
-            {
-                "text": bar.get("text", ""),
-                "start": float(new_start),
-                "end": float(new_end),
-                "words": adjusted_words,
-            }
-        )
+        filtered_words.append(Word(id=word.id, text=word.text, start=word_start, end=word_end))
 
-    if not filtered_bars:
-        raise HTTPException(status_code=400, detail="Trim range removed all lyric bars.")
+    if not filtered_words:
+        raise HTTPException(status_code=400, detail="Trim range removed all lyric words.")
+
+    filtered_validation = validate_word_timings(filtered_words, trim_end - trim_start)
+    filtered_words = filtered_validation.words
+
+    chunks = build_chunks(filtered_words)
+
+    existing_font_path = metadata.get("font", {}).get("path")
+    requested_font_path = payload.font_custom_path or existing_font_path
+    resolved_font_path = resolve_font_path(requested_font_path) if requested_font_path else None
+    if requested_font_path and resolved_font_path is None:
+        raise HTTPException(status_code=400, detail="Font file unavailable on the server.")
 
     font_settings = {
         "family": payload.font_family or metadata.get("font", {}).get("family", DEFAULT_FONT_FAMILY),
@@ -626,43 +1014,92 @@ def update_output(payload: UpdatePayload):
         if payload.font_size and payload.font_size > 0
         else int(metadata.get("font", {}).get("size", DEFAULT_FONT_SIZE)),
         "color": payload.font_color or metadata.get("font", {}).get("color", DEFAULT_FONT_COLOR),
+        "weight": int(payload.font_weight)
+        if payload.font_weight and payload.font_weight > 0
+        else int(metadata.get("font", {}).get("weight", DEFAULT_FONT_WEIGHT)),
+        "path": requested_font_path if resolved_font_path else None,
     }
 
     temp_audio = trim_audio_segment(audio_path, trim_start, trim_end)
     video_path = output_dir / "lyrics.mp4"
     lyrics_path = output_dir / "lyrics.txt"
-    build_lyrics_file([LyricBar(bar["text"], bar["start"], bar["end"]) for bar in filtered_bars], lyrics_path)
+    build_lyrics_file(chunks, lyrics_path)
     used_font = build_lyric_video(
-        [LyricBar(bar["text"], bar["start"], bar["end"]) for bar in filtered_bars],
+        chunks,
         video_path,
         temp_audio,
         font_family=font_settings["family"],
         font_size=font_settings["size"],
         font_color=font_settings["color"],
+        font_weight=font_settings["weight"],
+        font_path=resolved_font_path,
     )
     if temp_audio.exists():
         temp_audio.unlink()
 
-    bars_payload = filtered_bars
-    video_duration = max((bar["end"] for bar in filtered_bars), default=0.5)
+    chunks_data = chunks_payload(chunks)
+    video_duration = max((chunk.end for chunk in chunks), default=0.5)
+    combined_adjustments = {
+        "shifted": base_validation.adjustments.shifted + filtered_validation.adjustments.shifted,
+        "batched": base_validation.adjustments.batched + filtered_validation.adjustments.batched,
+        "dropped": base_validation.adjustments.dropped + filtered_validation.adjustments.dropped,
+    }
     metadata.update(
         {
             "video_duration": float(video_duration),
             "video_trim": {"start": float(trim_start), "end": float(trim_end)},
             "font": {
-                "family": used_font,
+                "family": font_settings["family"],
                 "size": font_settings["size"],
                 "color": font_settings["color"],
+                "weight": font_settings["weight"],
+                "path": font_settings["path"],
+                "applied": used_font,
             },
         }
     )
     write_output_metadata(metadata, output_dir)
-    write_bars_metadata(bars_payload, output_dir)
+    write_words_metadata(words_payload(base_words), output_dir)
+    write_chunks_metadata(chunks_data, output_dir)
 
-    return {
+    response = {
         "lyrics_url": f"/static/outputs/{payload.output_id}/lyrics.txt",
         "video_url": f"/static/outputs/{payload.output_id}/lyrics.mp4",
-        "bars": bars_payload,
+        "words": words_payload(filtered_words),
+        "chunks": chunks_data,
         "metadata": metadata,
         "output_id": payload.output_id,
     }
+    if combined_adjustments["shifted"] or combined_adjustments["batched"] or combined_adjustments["dropped"]:
+        response["timing_adjustments"] = combined_adjustments
+
+    return response
+def resolve_font_path(font_path: Optional[str]) -> Optional[Path]:
+    if not font_path:
+        return None
+    normalized = font_path.replace("\\", "/")
+    if normalized.startswith("/static/"):
+        normalized = normalized[len("/static/") :]
+    elif normalized.startswith("static/"):
+        normalized = normalized[len("static/") :]
+    candidate = Path("static") / normalized
+    try:
+        resolved = candidate.resolve()
+        static_root = Path("static").resolve()
+        resolved.relative_to(static_root)
+    except Exception:
+        return None
+    return resolved if resolved.exists() else None
+
+
+def font_style_signature(
+    font_family: str, font_size: int, font_color: str, font_weight: int, font_path: Optional[Path]
+) -> str:
+    font_marker = ""
+    if font_path:
+        try:
+            font_marker = str(font_path.stat().st_mtime)
+        except OSError:
+            font_marker = ""
+    seed = f"{font_family}|{font_size}|{font_color}|{font_weight}|{font_marker}"
+    return hashlib.sha1(seed.encode("utf-8")).hexdigest()[:12]
