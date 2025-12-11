@@ -186,9 +186,12 @@ function App() {
     url: null,
     option: "Inter",
     isCustom: false,
+    animationMode: "typewriter",
   });
   const [fontOptions, setFontOptions] = useState(DEFAULT_FONT_OPTIONS);
   const [fontUploading, setFontUploading] = useState(false);
+  const [backgroundVideo, setBackgroundVideo] = useState({ path: null, url: null });
+  const [backgroundUploading, setBackgroundUploading] = useState(false);
   const [editedWords, setEditedWords] = useState([]);
   const [outputId, setOutputId] = useState("");
   const [videoDuration, setVideoDuration] = useState(0);
@@ -402,6 +405,7 @@ function App() {
       setRowErrors({});
       setActiveWordId("");
       setClientLogs([]);
+      setBackgroundVideo({ path: null, url: null });
       if (!file) {
         setAppState(APP_STATES.idle);
       }
@@ -431,6 +435,13 @@ function App() {
         custom: true,
       });
     }
+    const metaBgPath = result.metadata?.background_video_path || null;
+    const normalizedBgUrl = metaBgPath
+      ? metaBgPath.startsWith("/static/")
+        ? metaBgPath
+        : `/static/${metaBgPath}`
+      : null;
+    setBackgroundVideo({ path: metaBgPath, url: normalizedBgUrl });
     setFontSettings({
       size: result.metadata?.font?.size ?? 70,
       family: result.metadata?.font?.family ?? "Inter",
@@ -440,6 +451,7 @@ function App() {
       url: normalizedFontUrl,
       option: metaFontPath || result.metadata?.font?.family || "Inter",
       isCustom: Boolean(metaFontPath),
+      animationMode: result.metadata?.animation_mode ?? "typewriter",
     });
     setAppState(APP_STATES.ready);
   }, [result, upsertFontOption, file]);
@@ -487,6 +499,33 @@ function App() {
     [appendLog, parseApiError, upsertFontOption]
   );
 
+  const handleBackgroundUpload = useCallback(
+    async (videoFile) => {
+      if (!videoFile) return;
+      setBackgroundUploading(true);
+      const formData = new FormData();
+      formData.append("file", videoFile);
+      appendLog("info", "Uploading background video", { name: videoFile.name, size: videoFile.size });
+      try {
+        const response = await fetch("/api/backgrounds", { method: "POST", body: formData });
+        if (!response.ok) {
+          const message = await parseApiError(response);
+          throw new Error(message);
+        }
+        const payload = await response.json();
+        setBackgroundVideo({ path: payload.video_path, url: payload.video_url });
+        appendLog("success", "Background video uploaded", { videoId: payload.video_id });
+      } catch (err) {
+        const message = err?.message || "Background video upload failed";
+        setError(message);
+        appendLog("error", "Background video upload failed", { message });
+      } finally {
+        setBackgroundUploading(false);
+      }
+    },
+    [appendLog, parseApiError]
+  );
+
   const handleSubmit = async () => {
     if (!file) {
       setError("Select an audio file first.");
@@ -498,8 +537,12 @@ function App() {
     formData.append("font_size", fontSettings.size);
     formData.append("font_color", fontSettings.color);
     formData.append("font_weight", fontSettings.weight);
+    formData.append("animation_mode", fontSettings.animationMode || "typewriter");
     if (fontSettings.path) {
       formData.append("font_custom_path", fontSettings.path);
+    }
+    if (backgroundVideo.path) {
+      formData.append("background_video_path", backgroundVideo.path);
     }
     if (trimSelection.active) {
       formData.append("trim_start", trimSelection.start.toString());
@@ -685,6 +728,8 @@ function App() {
           font_color: fontSettings.color,
           font_weight: fontSettings.weight,
           font_custom_path: fontSettings.path,
+          animation_mode: fontSettings.animationMode || "typewriter",
+          background_video_path: backgroundVideo.path,
           video_trim_start: videoTrim.start,
           video_trim_end: videoTrim.end,
         }),
@@ -791,6 +836,8 @@ function App() {
                 videoRef={videoRef}
                 videoTrim={videoTrim}
                 videoDuration={videoDuration}
+                onTrimChange={setVideoTrim}
+                waveformPoints={waveformPoints}
               />
             ) : (
               <EmptyState title="No renders yet" body="Upload a clip to unlock the animated preview." />
@@ -839,6 +886,10 @@ function App() {
             onUploadFont={handleFontUpload}
             uploading={fontUploading}
             onChange={(partial) => setFontSettings((prev) => ({ ...prev, ...partial }))}
+            backgroundVideo={backgroundVideo}
+            onUploadBackground={handleBackgroundUpload}
+            backgroundUploading={backgroundUploading}
+            onRemoveBackground={() => setBackgroundVideo({ path: null, url: null })}
           />
           <p className="helper-text">Font changes won’t affect the on-page overlay—only the rendered video.</p>
           <button className="primary full" type="button" onClick={handleSubmit} disabled={loading || isRendering}>

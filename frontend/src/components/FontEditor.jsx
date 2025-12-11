@@ -1,6 +1,21 @@
 const fontWeights = [400, 500, 600, 700, 800];
+const animationModes = [
+  { value: "phrase", label: "Phrase", description: "Show full phrase at once" },
+  { value: "word", label: "Word-by-word", description: "Display one word at a time" },
+  { value: "typewriter", label: "Typewriter", description: "Progressive word reveal" },
+];
 
-function FontEditor({ fontSettings, fontOptions, onChange, onUploadFont, uploading }) {
+function FontEditor({
+  fontSettings,
+  fontOptions,
+  onChange,
+  onUploadFont,
+  uploading,
+  backgroundVideo,
+  onUploadBackground,
+  backgroundUploading,
+  onRemoveBackground,
+}) {
   const sampleStyle = {
     fontFamily: fontSettings.family,
     fontSize: `${fontSettings.size}px`,
@@ -70,6 +85,19 @@ function FontEditor({ fontSettings, fontOptions, onChange, onUploadFont, uploadi
             onChange={(event) => onChange({ color: event.target.value })}
           />
         </div>
+        <div className="font-control">
+          <label>Animation mode</label>
+          <select
+            value={fontSettings.animationMode || "typewriter"}
+            onChange={(event) => onChange({ animationMode: event.target.value })}
+          >
+            {animationModes.map((mode) => (
+              <option key={mode.value} value={mode.value} title={mode.description}>
+                {mode.label}
+              </option>
+            ))}
+          </select>
+        </div>
         <div className="font-control upload-control">
           <label>Upload custom font</label>
           <div className="font-upload-row">
@@ -91,6 +119,32 @@ function FontEditor({ fontSettings, fontOptions, onChange, onUploadFont, uploadi
           </div>
           <p className="font-upload-hint">Add your own TTF/OTF/WOFF fonts for rendering and preview.</p>
         </div>
+        <div className="font-control upload-control">
+          <label>Background video</label>
+          <div className="font-upload-row">
+            <input
+              type="file"
+              accept=".mp4,.mov,.avi,.webm,.mkv"
+              id="background-upload-input"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) {
+                  onUploadBackground(file);
+                }
+                event.target.value = "";
+              }}
+            />
+            <label className="ghost-button" htmlFor="background-upload-input">
+              {backgroundUploading ? "Uploading..." : backgroundVideo.url ? "Change video" : "Choose video"}
+            </label>
+            {backgroundVideo.url && (
+              <button className="ghost-button" onClick={onRemoveBackground}>
+                Remove
+              </button>
+            )}
+          </div>
+          <p className="font-upload-hint">Upload MP4/MOV/WEBM. Video loops automatically if shorter than audio.</p>
+        </div>
       </div>
       <div className="font-preview" aria-live="polite">
         <div className="font-preview-label">Live font preview</div>
@@ -99,6 +153,15 @@ function FontEditor({ fontSettings, fontOptions, onChange, onUploadFont, uploadi
         </div>
         <p className="font-preview-hint">This sample reflects pending font choices only. Rendering uses these values when you click Generate.</p>
       </div>
+      {backgroundVideo.url && (
+        <div className="font-preview background-preview" aria-live="polite">
+          <div className="font-preview-label">Background video preview</div>
+          <div className="background-preview-wrapper">
+            <video src={backgroundVideo.url} controls loop muted autoPlay className="background-preview-video" />
+          </div>
+          <p className="font-preview-hint">Background will be resized to 720x1280 (9:16) and looped if needed.</p>
+        </div>
+      )}
     </div>
   );
 }

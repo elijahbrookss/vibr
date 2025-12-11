@@ -18,6 +18,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.staticfiles import StaticFiles
 from moviepy.audio.io.AudioFileClip import AudioFileClip
 from moviepy.video.VideoClip import ColorClip, TextClip
+from moviepy.video.io.VideoFileClip import VideoFileClip
 from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
 from pydantic import BaseModel
 
@@ -25,6 +26,7 @@ VIDEO_SIZE = (720, 1280)
 VIDEO_FPS = 24
 OUTPUT_ROOT = Path("static") / "outputs"
 FONT_UPLOAD_ROOT = Path("static") / "fonts"
+VIDEO_UPLOAD_ROOT = Path("static") / "backgrounds"
 CACHE_INDEX = OUTPUT_ROOT / "cache_index.json"
 METADATA_NAME = "metadata.json"
 FFMPEG_BINARY = shutil.which("ffmpeg") or "ffmpeg"
@@ -32,13 +34,14 @@ DEFAULT_FONT_FAMILY = "DejaVu-Sans"
 DEFAULT_FONT_SIZE = 70
 DEFAULT_FONT_COLOR = "white"
 DEFAULT_FONT_WEIGHT = 600
+DEFAULT_ANIMATION_MODE = "typewriter"
 FALLBACK_FONT_FAMILY = "DejaVu-Sans"
 MAX_WORDS_PER_CHUNK = 4
 MAX_GAP_BETWEEN_WORDS = 0.3
 WORDS_METADATA_NAME = "words.json"
 CHUNKS_METADATA_NAME = "chunks.json"
 SAFE_AREA_WIDTH_RATIO = 0.88
-SAFE_AREA_HEIGHT_RATIO = 0.28
+SAFE_AREA_HEIGHT_RATIO = 0.75
 MIN_FONT_SIZE = 36
 MIN_WORD_DURATION = 0.015
 OVERLAP_EPSILON = 0.001
@@ -190,6 +193,33 @@ async def upload_font(file: UploadFile = File(...)):
         "font_path": relative_path,
         "font_url": font_url,
         "family": family_guess,
+    }
+
+
+@app.post("/api/backgrounds")
+async def upload_background_video(file: UploadFile = File(...)):
+    allowed_extensions = {".mp4", ".mov", ".avi", ".webm", ".mkv"}
+    extension = Path(file.filename).suffix.lower()
+    if extension not in allowed_extensions:
+        raise HTTPException(status_code=400, detail="Unsupported video type. Upload MP4, MOV, AVI, WEBM, or MKV file.")
+
+    video_id = uuid.uuid4().hex
+    target_dir = VIDEO_UPLOAD_ROOT / video_id
+    target_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = Path(file.filename).name
+    target_path = target_dir / safe_name
+    await save_upload_file(file, target_path)
+
+    try:
+        relative_path = str(target_path.relative_to(Path("static")))
+    except Exception:
+        relative_path = str(target_path)
+    video_url = f"/static/{relative_path}"
+    LOGGER.info("uploaded background video", extra={"video_id": video_id, "path": str(relative_path)})
+    return {
+        "video_id": video_id,
+        "video_path": relative_path,
+        "video_url": video_url,
     }
 
 
@@ -664,31 +694,61 @@ def build_lyric_video(
     font_color: str = DEFAULT_FONT_COLOR,
     font_weight: int = DEFAULT_FONT_WEIGHT,
     font_path: Optional[Path] = None,
+    animation_mode: str = DEFAULT_ANIMATION_MODE,
+    background_video_path: Optional[Path] = None,
 ) -> str:
-    LOGGER.info("building lyric video", extra={"chunks": len(chunks), "destination": str(destination)})
+    LOGGER.info("building lyric video", extra={"chunks": len(chunks), "destination": str(destination), "animation_mode": animation_mode, "has_background": background_video_path is not None})
     video_start = time.time()
     total_duration = max((chunk.end for chunk in chunks), default=0.5)
-    background = ColorClip(size=VIDEO_SIZE, color=(0, 0, 0), duration=total_duration)
+
+    # Create background - either custom video or black color
+    if background_video_path:
+        LOGGER.info("background_video_path provided", extra={"path": str(background_video_path), "exists": background_video_path.exists()})
+
+    if background_video_path and background_video_path.exists():
+        try:
+            LOGGER.info("loading background video", extra={"path": str(background_video_path)})
+            bg_clip = VideoFileClip(str(background_video_path))
+            bg_duration = bg_clip.duration
+            LOGGER.info("background video loaded", extra={"duration": bg_duration, "size": bg_clip.size})
+
+            # Resize to match video dimensions
+            bg_clip = bg_clip.resize(VIDEO_SIZE)
+            LOGGER.info("background video resized", extra={"new_size": VIDEO_SIZE})
+
+            # Loop if background is shorter than total duration
+            if bg_duration < total_duration:
+                num_loops = int(total_duration / bg_duration) + 1
+                LOGGER.info("looping background video", extra={"num_loops": num_loops})
+                bg_clip = bg_clip.loop(n=num_loops)
+
+            # Set duration to match lyrics
+            background = bg_clip.with_duration(total_duration)
+            LOGGER.info("using custom background video", extra={"bg_duration": bg_duration, "total_duration": total_duration, "looped": bg_duration < total_duration})
+        except Exception as exc:
+            LOGGER.error(f"failed to load background video, using black: {exc}", extra={"error": str(exc), "path": str(background_video_path)})
+            background = ColorClip(size=VIDEO_SIZE, color=(0, 0, 0), duration=total_duration)
+    else:
+        LOGGER.info("using black background", extra={"has_bg_path": background_video_path is not None, "exists": background_video_path.exists() if background_video_path else False})
+        background = ColorClip(size=VIDEO_SIZE, color=(0, 0, 0), duration=total_duration)
+
     text_clips = []
     font_used = font_family
+
     for chunk in chunks:
         if not chunk.words:
             continue
         text_clip, used_font, resolved_size, safe_dimensions = _build_safe_text_clip(
             chunk, font_used, font_size, font_color, font_weight, font_path
         )
-        prefix_clips: list[TextClip] = []
-        for idx, word in enumerate(chunk.words):
-            prefix_text = " ".join(w.text for w in chunk.words[: idx + 1])
-            next_start = chunk.words[idx + 1].start if idx + 1 < len(chunk.words) else chunk.end
-            gap = max(next_start - word.start, 0.0)
-            if idx + 1 < len(chunk.words):
-                duration = gap if gap > 0 else MIN_WORD_DURATION
-            else:
-                duration = max(chunk.end - word.start, MIN_WORD_DURATION)
+
+        if animation_mode == "phrase":
+            # Mode 1: Show full phrase at once, from first word start to last word end
+            chunk_start = chunk.words[0].start
+            chunk_duration = chunk.end - chunk_start
             try:
-                word_clip = TextClip(
-                    text=prefix_text,
+                phrase_clip = TextClip(
+                    text=chunk.text,
                     font_size=resolved_size,
                     font=used_font,
                     color=font_color,
@@ -696,22 +756,111 @@ def build_lyric_video(
                     method="caption",
                 )
             except ValueError:
-                LOGGER.warning("word clip font fallback", extra={"font": used_font})
-                word_clip = TextClip(
-                    text=prefix_text,
+                LOGGER.warning("phrase clip font fallback", extra={"font": used_font})
+                phrase_clip = TextClip(
+                    text=chunk.text,
                     font_size=resolved_size,
                     color=font_color,
                     size=safe_dimensions,
                     method="caption",
                 )
-            word_clip = (
-                word_clip.with_start(word.start)
-                .with_duration(duration)
+            phrase_clip = (
+                phrase_clip.with_start(chunk_start)
+                .with_duration(chunk_duration)
                 .with_position("center")
             )
-            prefix_clips.append(word_clip)
+            text_clips.append(phrase_clip)
+
+        elif animation_mode == "word":
+            # Mode 2: Show one word at a time, each for its duration
+            for word in chunk.words:
+                word_duration = word.end - word.start
+                try:
+                    word_clip = TextClip(
+                        text=word.text,
+                        font_size=resolved_size,
+                        font=used_font,
+                        color=font_color,
+                        size=safe_dimensions,
+                        method="caption",
+                    )
+                except ValueError:
+                    LOGGER.warning("word clip font fallback", extra={"font": used_font})
+                    word_clip = TextClip(
+                        text=word.text,
+                        font_size=resolved_size,
+                        color=font_color,
+                        size=safe_dimensions,
+                        method="caption",
+                    )
+                word_clip = (
+                    word_clip.with_start(word.start)
+                    .with_duration(word_duration)
+                    .with_position("center")
+                )
+                text_clips.append(word_clip)
+
+        else:  # typewriter (default)
+            # Mode 3: Progressive word reveal with fixed left-aligned layout
+            # Strategy: Use a fixed-width caption box and build text left-to-right
+            safe_width, safe_height = safe_dimensions
+            full_text = chunk.text
+
+            # Create each progressive state (word 1, word 1-2, word 1-2-3, etc.)
+            for idx, word in enumerate(chunk.words):
+                # Build visible text (words revealed so far) + invisible placeholder for remaining space
+                visible_words = chunk.words[: idx + 1]
+                remaining_words = chunk.words[idx + 1 :]
+
+                # Use actual visible text and pad with spaces to maintain layout
+                visible_text = " ".join(w.text for w in visible_words)
+                # Add invisible placeholder to keep the text box width consistent
+                if remaining_words:
+                    # Approximate remaining space with spaces (rough estimation)
+                    remaining_text = " ".join(w.text for w in remaining_words)
+                    # Use zero-width spaces or regular spaces
+                    padding = " " * len(remaining_text)
+                    full_display_text = visible_text + padding
+                else:
+                    full_display_text = visible_text
+
+                # Calculate duration for this clip
+                next_start = chunk.words[idx + 1].start if idx + 1 < len(chunk.words) else chunk.end
+                gap = max(next_start - word.start, 0.0)
+                if idx + 1 < len(chunk.words):
+                    duration = gap if gap > 0 else MIN_WORD_DURATION
+                else:
+                    duration = max(chunk.end - word.start, MIN_WORD_DURATION)
+
+                # Create text clip with fixed-width caption box
+                try:
+                    word_clip = TextClip(
+                        text=full_display_text,
+                        font_size=resolved_size,
+                        font=used_font,
+                        color=font_color,
+                        size=safe_dimensions,
+                        method="caption",
+                    )
+                except ValueError:
+                    LOGGER.warning("word clip font fallback", extra={"font": used_font})
+                    word_clip = TextClip(
+                        text=full_display_text,
+                        font_size=resolved_size,
+                        color=font_color,
+                        size=safe_dimensions,
+                        method="caption",
+                    )
+
+                # Position each clip at the same location
+                word_clip = (
+                    word_clip.with_start(word.start)
+                    .with_duration(duration)
+                    .with_position("center")
+                )
+                text_clips.append(word_clip)
+
         text_clip.close()
-        text_clips.extend(prefix_clips)
         font_used = used_font
 
     if not text_clips:
@@ -756,6 +905,8 @@ async def process_audio(
     font_color: str = Form(DEFAULT_FONT_COLOR),
     font_weight: Optional[int] = Form(DEFAULT_FONT_WEIGHT),
     font_custom_path: Optional[str] = Form(None),
+    animation_mode: str = Form(DEFAULT_ANIMATION_MODE),
+    background_video_path: Optional[str] = Form(None),
 ):
     LOGGER.info(
         "processing audio upload",
@@ -862,6 +1013,15 @@ async def process_audio(
                 font_relative_path = str(font_path.relative_to(Path("static")))
             except Exception:
                 font_relative_path = str(font_path)
+        # Resolve background video path if provided
+        bg_video_path = None
+        if background_video_path:
+            bg_video_path = Path(background_video_path) if isinstance(background_video_path, str) else background_video_path
+            # If it's a relative path, resolve it from static directory
+            if not bg_video_path.is_absolute():
+                bg_video_path = Path("static") / bg_video_path
+            LOGGER.info("resolved background path for rendering", extra={"path": str(bg_video_path), "exists": bg_video_path.exists()})
+
         used_font = build_lyric_video(
             chunks,
             video_path,
@@ -871,15 +1031,27 @@ async def process_audio(
             font_color=font_color or DEFAULT_FONT_COLOR,
             font_weight=effective_font_weight,
             font_path=font_path,
+            animation_mode=animation_mode,
+            background_video_path=bg_video_path,
         )
         LOGGER.info("video file written", extra={"path": str(video_path)})
         audio_store_path = output_dir / "audio.wav"
         stored_audio = trim_audio_segment(selected_audio_path, 0.0, total_duration)
         shutil.move(str(stored_audio), str(audio_store_path))
+        # Store background video path relative to static if provided
+        bg_relative_path = None
+        if bg_video_path:
+            try:
+                bg_relative_path = str(bg_video_path.relative_to(Path("static")))
+            except Exception:
+                bg_relative_path = str(bg_video_path)
+
         metadata = {
             "audio_path": "audio.wav",
             "video_duration": float(total_duration),
             "video_trim": {"start": 0.0, "end": float(total_duration)},
+            "animation_mode": animation_mode,
+            "background_video_path": bg_relative_path,
             "font": {
                 "family": font_family or DEFAULT_FONT_FAMILY,
                 "size": effective_font_size,
@@ -940,6 +1112,8 @@ class UpdatePayload(BaseModel):
     font_color: Optional[str] = None
     font_weight: Optional[int] = None
     font_custom_path: Optional[str] = None
+    animation_mode: Optional[str] = None
+    background_video_path: Optional[str] = None
 
 
 @app.post("/api/update")
@@ -1020,6 +1194,19 @@ def update_output(payload: UpdatePayload):
         "path": requested_font_path if resolved_font_path else None,
     }
 
+    animation_mode = payload.animation_mode or metadata.get("animation_mode", DEFAULT_ANIMATION_MODE)
+
+    # Handle background video
+    bg_video_path = None
+    if payload.background_video_path:
+        bg_video_path = Path("static") / payload.background_video_path
+        if not bg_video_path.exists():
+            bg_video_path = None
+    elif metadata.get("background_video_path"):
+        bg_video_path = Path("static") / metadata.get("background_video_path")
+        if not bg_video_path.exists():
+            bg_video_path = None
+
     temp_audio = trim_audio_segment(audio_path, trim_start, trim_end)
     video_path = output_dir / "lyrics.mp4"
     lyrics_path = output_dir / "lyrics.txt"
@@ -1033,6 +1220,8 @@ def update_output(payload: UpdatePayload):
         font_color=font_settings["color"],
         font_weight=font_settings["weight"],
         font_path=resolved_font_path,
+        animation_mode=animation_mode,
+        background_video_path=bg_video_path,
     )
     if temp_audio.exists():
         temp_audio.unlink()
@@ -1048,6 +1237,8 @@ def update_output(payload: UpdatePayload):
         {
             "video_duration": float(video_duration),
             "video_trim": {"start": float(trim_start), "end": float(trim_end)},
+            "animation_mode": animation_mode,
+            "background_video_path": payload.background_video_path if payload.background_video_path else metadata.get("background_video_path"),
             "font": {
                 "family": font_settings["family"],
                 "size": font_settings["size"],

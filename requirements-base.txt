@@ -1,0 +1,5 @@
+# Heavy dependencies that rarely change
+# These will be cached in a separate Docker layer
+openai-whisper>=20231117
+moviepy>=1.0.3
+ffmpeg-python>=0.2.0
