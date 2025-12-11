@@ -27,9 +27,10 @@ function TrimModal({
   const [discoveredDuration, setDiscoveredDuration] = useState(audioDuration);
   const minSelection = Math.max(0, trimLimits?.min ?? DEFAULT_LIMITS.min);
   const maxSelection = Math.max(minSelection, trimLimits?.max ?? DEFAULT_LIMITS.max);
-  const sliderMax = Math.max(audioDuration || 0, modalRange.end || 0.01, 0.01);
+  const effectiveDuration = discoveredDuration || audioDuration || 0.01;
+  const sliderMax = effectiveDuration;
   const startValue = modalRange.start ?? 0;
-  const endValue = modalRange.end ?? sliderMax;
+  const endValue = Math.min(modalRange.end ?? sliderMax, sliderMax);
   const startPercent = (startValue / sliderMax) * 100;
   const endPercent = (endValue / sliderMax) * 100;
 
@@ -267,7 +268,9 @@ function TrimModal({
           }}
         />
         <div className="trim-track live" ref={trackRef}>
-          <WaveformBackdrop points={waveformPoints} selectionStart={selectionStartRatio} selectionEnd={selectionEndRatio} />
+          <div className="trim-track-inner">
+            <WaveformBackdrop points={waveformPoints} selectionStart={selectionStartRatio} selectionEnd={selectionEndRatio} />
+          </div>
           <div
             className="trim-highlight"
             style={{

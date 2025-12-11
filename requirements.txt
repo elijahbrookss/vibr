@@ -1,7 +1,5 @@
+# Lighter dependencies that may change more frequently
 fastapi
 uvicorn
-openai-whisper
-moviepy
-ffmpeg
 python-multipart
 aiofiles

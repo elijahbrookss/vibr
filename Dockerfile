@@ -9,6 +9,11 @@ RUN apt-get update && \
 
 WORKDIR /app
 
+# Install heavy base dependencies first (cached layer)
+COPY requirements-base.txt .
+RUN pip install --no-cache-dir --disable-pip-version-check -r requirements-base.txt
+
+# Install lighter app dependencies (changes more frequently)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
